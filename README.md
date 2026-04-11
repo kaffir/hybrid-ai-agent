@@ -546,4 +546,5 @@ hybrid-ai-agent/
 
 ## License
 
-[Add your license here]
+MIT - Use freely, modify as needed, contribute back if you can.
+
