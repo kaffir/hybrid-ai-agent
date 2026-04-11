@@ -1,0 +1,35 @@
+# Secrets — NEVER commit these
+.env
+*.key
+*.pem
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+dist/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Logs
+logs/
+*.log
+
+# Agent runtime state (inside workspace)
+_workspace/.agent/
+
+# Pytest cache
+.pytest_cache/
+
+# Ruff cache
+.ruff_cache/
+
+# Temporary files
+/tmp/
+*.tmp

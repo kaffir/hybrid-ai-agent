@@ -1,0 +1,72 @@
+# ============================================================
+# Hybrid AI Agent — Sandbox Orchestration
+# ============================================================
+
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    # Security: Container name for easy management
+    container_name: ai-agent-sandbox
+
+    # Security: Resource limits — prevent runaway processes
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 4G
+        reservations:
+          memory: 1G
+
+    # Security: Mount ONLY the project workspace
+    volumes:
+      - ${PROJECT_PATH:-./_workspace}:/workspace
+
+    # Security: Environment variables (secrets passed at runtime)
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - OLLAMA_PRIMARY_MODEL=${OLLAMA_PRIMARY_MODEL:-gemma4:26b}
+      - OLLAMA_FALLBACK_MODEL=${OLLAMA_FALLBACK_MODEL:-gemma4:e4b}
+      - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-sonnet-4-20250514}
+      - AGENT_MODE=${AGENT_MODE:-HYBRID}
+      - WORKSPACE_ROOT=/workspace
+      - REQUIRE_APPROVAL_FOR_WRITES=true
+      - REQUIRE_APPROVAL_FOR_SHELL=true
+      - AUDIT_LOG_ENABLED=true
+
+    # Security: Drop all capabilities, add back only what's needed
+    cap_drop:
+      - ALL
+
+    # Security: Read-only root filesystem
+    read_only: true
+
+    # Security: Writable tmpfs for temporary files only
+    tmpfs:
+      - /tmp:size=512M,noexec,nosuid
+      - /home/agent:size=256M,noexec,nosuid
+
+    # Security: No privilege escalation
+    security_opt:
+      - no-new-privileges:true
+
+    # Security: Interactive terminal for human-in-the-loop
+    stdin_open: true
+    tty: true
+
+    # Security: Restricted networking (defined below)
+    networks:
+      - sandbox-net
+
+    # Security: DNS — use Docker's internal DNS only
+    dns:
+      - 127.0.0.11
+
+# Security: Network with restricted egress
+networks:
+  sandbox-net:
+    driver: bridge
+    internal: false  # Needs external access for Claude API

@@ -1,0 +1,236 @@
+# ============================================================
+# Hybrid AI Agent — Routing Rules Configuration
+# ============================================================
+# This file defines how user requests are classified into
+# processing tiers. Modify keywords here to tune routing
+# without changing any code.
+#
+# Tiers:
+#   SIMPLE  → Gemma 4 E4B (fast, lightweight)
+#   MEDIUM  → Gemma 4 26B (capable, local)
+#   COMPLEX → Claude API (highest quality, cloud)
+#
+# Priority: security_override > scope_signals > keywords > default
+# ============================================================
+
+# Default tier when no rules match
+default_tier: MEDIUM
+
+# --- Security Override (ALWAYS routes to COMPLEX) ---
+# Zero-tolerance: any match here forces Claude API
+# regardless of all other signals
+security_override:
+  keywords:
+    - "security"
+    - "vulnerability"
+    - "vulnerabilities"
+    - "injection"
+    - "sql injection"
+    - "xss"
+    - "cross-site"
+    - "csrf"
+    - "authentication"
+    - "authorization"
+    - "auth flow"
+    - "oauth"
+    - "jwt"
+    - "token validation"
+    - "encryption"
+    - "decrypt"
+    - "hash"
+    - "password"
+    - "credential"
+    - "secret"
+    - "api key"
+    - "certificate"
+    - "tls"
+    - "ssl"
+    - "cors"
+    - "sanitize input"
+    - "input validation"
+    - "owasp"
+    - "penetration"
+    - "pentest"
+    - "audit"
+    - "cve"
+    - "privilege escalation"
+    - "access control"
+    - "rbac"
+    - "rate limit"
+    - "brute force"
+    - "dos"
+    - "ddos"
+
+# --- Task Keywords ---
+# Phrases are matched before single words
+# Longer matches take priority
+
+task_keywords:
+  SIMPLE:
+    phrases:
+      - "format this"
+      - "format the"
+      - "reformat this"
+      - "fix indentation"
+      - "fix spacing"
+      - "add type hints"
+      - "add type hint"
+      - "add a docstring"
+      - "add docstring"
+      - "add docstrings"
+      - "write a docstring"
+      - "add comments"
+      - "add a comment"
+      - "rename variable"
+      - "rename function"
+      - "convert to f-string"
+      - "what does this mean"
+      - "what is a"
+      - "explain this error"
+      - "explain this code"
+      - "generate a dataclass"
+      - "generate a model"
+      - "generate boilerplate"
+      - "create a class for"
+      - "sort imports"
+      - "remove unused imports"
+      - "pep 8"
+      - "pep8"
+      - "lint this"
+      - "fix lint"
+    single_words:
+      - "format"
+      - "indent"
+      - "boilerplate"
+      - "template"
+      - "snippet"
+      - "typedef"
+      - "enum"
+      - "docstring"
+
+  MEDIUM:
+    phrases:
+      - "write a function"
+      - "write a method"
+      - "write a test"
+      - "write unit test"
+      - "write tests for"
+      - "refactor this"
+      - "refactor the"
+      - "fix this bug"
+      - "fix the bug"
+      - "debug this"
+      - "find the bug"
+      - "optimize this"
+      - "improve performance"
+      - "add error handling"
+      - "add logging"
+      - "add validation"
+      - "implement this function"
+      - "implement this method"
+      - "create a service"
+      - "create a module"
+      - "parse this"
+      - "extract data"
+      - "write a script"
+      - "connect to database"
+      - "read from file"
+      - "write to file"
+      - "add a feature"
+      - "modify this class"
+      - "update this function"
+      - "convert this"
+      - "migrate this"
+    single_words:
+      - "refactor"
+      - "debug"
+      - "test"
+      - "optimize"
+      - "implement"
+      - "fix"
+
+  COMPLEX:
+    phrases:
+      - "review the architecture"
+      - "design a system"
+      - "design the system"
+      - "architect this"
+      - "implement a complete"
+      - "implement the entire"
+      - "build a full"
+      - "create an api"
+      - "design an api"
+      - "implement authentication"
+      - "database schema design"
+      - "migration strategy"
+      - "deployment pipeline"
+      - "ci cd pipeline"
+      - "microservices"
+      - "event driven"
+      - "message queue"
+      - "distributed system"
+      - "scale this"
+      - "performance review"
+      - "code review"
+      - "review this project"
+      - "review the codebase"
+      - "technical debt"
+      - "dependency analysis"
+    single_words:
+      - "architecture"
+      - "architect"
+      - "design"
+      - "pipeline"
+      - "infrastructure"
+      - "deployment"
+      - "kubernetes"
+      - "docker"
+      - "terraform"
+
+# --- Scope Signals ---
+# Structural indicators that elevate the tier
+
+scope_signals:
+  # Elevate SIMPLE → MEDIUM
+  elevate_to_medium:
+    - pattern: "src/"
+      reason: "Source directory reference implies code modification"
+    - pattern: "test/"
+      reason: "Test directory reference implies test creation/modification"
+    - pattern: "multiple files"
+      reason: "Explicit multi-file scope"
+    - pattern: "across the"
+      reason: "Cross-module scope language"
+
+  # Elevate MEDIUM → COMPLEX
+  elevate_to_complex:
+    - pattern: "entire project"
+      reason: "Project-wide scope"
+      weight: 5.0
+    - pattern: "whole codebase"
+      reason: "Codebase-wide scope"
+      weight: 5.0
+    - pattern: "all files in"
+      reason: "Directory-wide operation"
+      weight: 5.0
+    - pattern: "end to end"
+      reason: "Full-stack scope"
+      weight: 5.0
+    - pattern: "across all"
+      reason: "Universal scope language"
+      weight: 5.0
+    - pattern: "system design"
+      reason: "System-level scope"
+      weight: 5.0
+
+# --- Confidence Threshold ---
+# If the router's confidence in its classification is below
+# this threshold, it includes a note in the output
+confidence_threshold: 0.6
+
+# --- Timeout per Tier (seconds) ---
+# Auto-cancel requests exceeding these limits
+tier_timeouts:
+  SIMPLE: 30
+  MEDIUM: 120
+  COMPLEX: 180

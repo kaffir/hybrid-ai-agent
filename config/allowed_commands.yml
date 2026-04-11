@@ -1,0 +1,65 @@
+allowed:
+  # Python
+  - python
+  - pip          # Intercepted — requires structured assessment + approval
+  - pytest
+  - ruff
+  - mypy
+
+  # File operations (scoped to /workspace)
+  - cat
+  - head
+  - tail
+  - wc
+  - find
+  - grep
+  - diff
+  - mkdir
+  - cp
+  - mv
+  - touch
+  - rm           # Intercepted — requires justification + approval
+
+  # Git
+  - git
+
+  # Build tools
+  - make
+
+  # Utilities
+  - echo
+  - date
+  - ls
+  - tree
+  - which
+  - env
+
+# Commands that are allowed but require enhanced approval flow
+enhanced_approval:
+  rm:
+    risk_level: HIGH
+    require_reason: true
+    require_file_list: true
+    require_reversibility_check: true
+    blocked_flags:
+      - "-rf"
+      - "-fr"
+    blocked_patterns:
+      - "*"        # No wildcard deletion
+      - "/"        # No root deletion
+
+  pip:
+    risk_level: HIGH
+    allowed_subcommands:
+      - "install"
+      - "list"
+      - "show"
+      - "freeze"
+    require_for_install:
+      - reason
+      - security_assessment
+      - performance_notes
+      - dependency_list
+      - license
+      - alternatives
+    disclaimer: "AI-generated assessment. Verify independently."

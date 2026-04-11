@@ -1,0 +1,57 @@
+# Patterns that are ALWAYS blocked, even if the base command is allowed
+# These catch attempts to bypass the allowlist
+
+blocked_patterns:
+  # Network exfiltration
+  - pattern: "curl"
+    reason: "Direct network access not permitted"
+  - pattern: "wget"
+    reason: "Direct network access not permitted"
+  - pattern: "nc "
+    reason: "Netcat not permitted"
+  - pattern: "/dev/tcp"
+    reason: "Bash TCP device not permitted"
+
+  # Dangerous operations
+  - pattern: "rm -rf /"
+    reason: "Recursive root deletion"
+  - pattern: "rm -rf *"
+    reason: "Recursive wildcard deletion"
+  - pattern: "> /dev/"
+    reason: "Device file write not permitted"
+  - pattern: "chmod 777"
+    reason: "World-writable permissions not permitted"
+
+  # Privilege escalation
+  - pattern: "sudo"
+    reason: "Privilege escalation not permitted"
+  - pattern: "su "
+    reason: "User switching not permitted"
+
+  # Code injection via interpreter
+  - pattern: "python -c"
+    reason: "Inline Python execution not permitted — use a file"
+  - pattern: "python3 -c"
+    reason: "Inline Python execution not permitted — use a file"
+  - pattern: "node -e"
+    reason: "Inline Node execution not permitted — use a file"
+  - pattern: "eval "
+    reason: "Shell eval not permitted"
+
+  # Encoding obfuscation
+  - pattern: "base64"
+    reason: "Base64 encoding/decoding not permitted in shell"
+  - pattern: "\\x"
+    reason: "Hex escape sequences not permitted"
+
+  # Environment/secret access
+  - pattern: ".env"
+    reason: "Direct .env file access not permitted"
+  - pattern: "ANTHROPIC_API_KEY"
+    reason: "API key access not permitted"
+  - pattern: "API_KEY"
+    reason: "Credential access not permitted"
+  - pattern: "/etc/passwd"
+    reason: "System file access not permitted"
+  - pattern: "/etc/shadow"
+    reason: "System file access not permitted"
