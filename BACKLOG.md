@@ -15,6 +15,7 @@ Items deferred during initial implementation for future phases.
 | BL-005 | Unicode Obfuscation Hardening | Low | Current sanitizer detects ASCII-based prompt injection patterns. Add Unicode normalization (NFKC) before pattern matching to catch homoglyph and encoding-based bypass attempts. |
 | BL-006 | Network Egress Filtering | Medium | Current network restriction is application-level (URL allowlist in httpx client). Add container-level network policy or DNS-based filtering for defense-in-depth. Blocked by `cap_drop: ALL` removing `CAP_NET_ADMIN`. Investigate Docker network policies or external proxy. |
 | BL-007 | ReAct Tool Loop Integration | **High** | Current agent sends user request directly to LLM without using tools. The LLM cannot read workspace files, execute commands, or interact with the codebase autonomously. Implement full ReAct loop where: (1) LLM decides which tool to call, (2) agent executes the tool through the security pipeline, (3) tool result is fed back to the LLM for next reasoning step. This is required for commands like "scan my code for bugs" or "refactor this module". Includes `/scan` command as an interim solution. |
+| BL-008 | Git Branch Isolation for File Management | **High** | Agent auto-creates a dedicated branch (`agent/task-<id>`) for each task. All file modifications are committed to this branch, never to `main`. On task completion, the agent presents a PR-style diff showing all changes. User can merge, cherry-pick specific changes, or discard the branch entirely. Requires: (1) auto-branch creation on task start, (2) auto-commit after each approved file write, (3) diff summary on task completion, (4) merge/cherry-pick/discard commands. Tightly coupled with BL-007 — implement together. |
 
 ---
 
@@ -35,7 +36,7 @@ Items deferred during initial implementation for future phases.
 
 Based on Phase 1 findings, the recommended order for Phase 2:
 
-1. **BL-007 + EN-002** (ReAct Tool Loop) — Without this, the agent cannot interact with the codebase. This is the highest impact item.
+1. **BL-007 + BL-008 + EN-002** (ReAct Tool Loop + Git Branch Isolation) — Without the tool loop, the agent cannot interact with the codebase. Git branch isolation ensures safe file manipulation. These three items are tightly coupled and should be implemented together.
 2. **EN-001** (Conversation Memory) — Enables multi-turn interactions which are natural for coding workflows.
 3. **BL-001** (Background Tasks) — Quality of life for long-running requests.
 4. **BL-006** (Network Egress Filtering) — Strengthens security posture.
