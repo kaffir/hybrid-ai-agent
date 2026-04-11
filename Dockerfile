@@ -41,9 +41,11 @@ RUN apt-get update && \
 # Copy virtual environment from builder
 COPY --from=builder /opt/venv /opt/venv
 
-# Copy application source
+# Copy application source and config
 COPY src/ /app/src/
 COPY config/ /app/config/
+COPY conftest.py /app/conftest.py
+COPY pyproject.toml /app/pyproject.toml
 
 # Set ownership
 RUN chown -R agent:agent /app
@@ -63,6 +65,7 @@ RUN mkdir -p /workspace/.agent && chown agent:agent /workspace/.agent
 # Security: Switch to non-root user
 USER agent
 
-WORKDIR /workspace
+# Set working directory to /app so config/ paths resolve correctly
+WORKDIR /app
 
 ENTRYPOINT ["python", "-m", "src.main"]
