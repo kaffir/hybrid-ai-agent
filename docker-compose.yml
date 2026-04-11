@@ -56,17 +56,3 @@ services:
     # Security: Interactive terminal for human-in-the-loop
     stdin_open: true
     tty: true
-
-    # Security: Restricted networking (defined below)
-    networks:
-      - sandbox-net
-
-    # Security: DNS — use Docker's internal DNS only
-    dns:
-      - 127.0.0.11
-
-# Security: Network with restricted egress
-networks:
-  sandbox-net:
-    driver: bridge
-    internal: false  # Needs external access for Claude API
