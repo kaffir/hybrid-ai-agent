@@ -123,15 +123,27 @@ class ToolExecutor:
         return result
 
     def _ensure_branch(self) -> None:
-        """Create agent branch if not already active."""
-        if self._branch_mgr and not self._branch_mgr.has_active_branch:
-            from rich.console import Console
-            branch = self._branch_mgr.start_task()
-            if branch:
-                Console().print(
-                    f"[dim]  [Branch created: "
-                    f"{branch.branch_name}][/dim]"
-                )
+        """
+        Create agent branch if not already active.
+
+        Does nothing if:
+          - No branch manager configured
+          - Workspace is not a git repo (git-unaware mode)
+          - Branch already active
+        """
+        if not self._branch_mgr:
+            return
+        if not self._branch_mgr.is_git_workspace:
+            return  # Git-unaware mode — no branch isolation
+        if self._branch_mgr.has_active_branch:
+            return
+        from rich.console import Console
+        branch = self._branch_mgr.start_task()
+        if branch:
+            Console().print(
+                f"[dim]  [Branch created: "
+                f"{branch.branch_name}][/dim]"
+            )
 
     # ── File Operations ──
 

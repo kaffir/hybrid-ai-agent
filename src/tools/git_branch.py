@@ -100,7 +100,12 @@ class GitBranchManager:
 
         # Check if workspace is a repo
         if not self._is_git_repo():
-            return True, "Not a git repo — will initialize on first write."
+            return True, (
+                "Workspace is not a git repo. "
+                "Running in git-unaware mode — "
+                "file writes go directly with approval only. "
+                "Initialize with 'git init' for branch isolation."
+            )
 
         # Check git status works
         result = self._run_git("git status")
@@ -127,27 +132,21 @@ class GitBranchManager:
 
         return True, "Git is healthy."
 
+    @property
+    def is_git_workspace(self) -> bool:
+        """Check if workspace is a git repository."""
+        return self._is_git_repo()
+
     def init_repo_if_needed(self) -> bool:
         """
-        Initialize git repo if workspace isn't one yet.
+        Check if workspace is a git repo.
+
+        Does NOT auto-create repos — respects user's choice.
 
         Returns:
-            True if repo exists or was created successfully.
+            True if repo exists, False if not.
         """
-        if self._is_git_repo():
-            return True
-
-        result = self._run_git("git init")
-        if not result.success:
-            return False
-
-        # Create initial commit so branches work
-        self._run_git("git add -A")
-        result = self._run_git(
-            'git commit -m "Initial commit (auto-created by agent)" '
-            "--allow-empty"
-        )
-        return result.success
+        return self._is_git_repo()
 
     def start_task(
         self, task_id: Optional[str] = None
@@ -155,13 +154,16 @@ class GitBranchManager:
         """
         Create and checkout a new agent branch for a task.
 
+        Returns None if workspace is not a git repo
+        (git-unaware mode — no branch isolation).
+
         Args:
             task_id: Optional task ID. Auto-generated if not provided.
 
         Returns:
-            BranchInfo if successful, None if failed.
+            BranchInfo if successful, None if not a git repo or failed.
         """
-        if not self.init_repo_if_needed():
+        if not self.is_git_workspace:
             return None
 
         if task_id is None:

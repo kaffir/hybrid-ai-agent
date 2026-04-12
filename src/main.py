@@ -166,7 +166,7 @@ def create_agent() -> Agent:
     return agent
 
 
-def show_banner(agent: Agent) -> None:
+def show_banner(agent: Agent, branch_mgr) -> None:
     """Display startup banner."""
     mode = agent.mode.value
     mode_color = "green" if mode == "HYBRID" else "yellow"
@@ -185,6 +185,14 @@ def show_banner(agent: Agent) -> None:
         banner.append(" | Claude API", style="dim")
     banner.append(
         "\n   Security: Zero-tolerance | Human-in-the-loop",
+        style="dim",
+    )
+    # Check git mode
+    git_mode = "Branch isolation"
+    if not branch_mgr or not branch_mgr.is_git_workspace:
+        git_mode = "Git-unaware (no branch isolation)"
+    banner.append(
+        f"\n   Git:      {git_mode}",
         style="dim",
     )
     banner.append(
@@ -566,8 +574,9 @@ def main() -> None:
     queue = agent._queue
 
     agent._health.start()
+    branch_mgr = agent._branch_mgr
 
-    show_banner(agent)
+    show_banner(agent, branch_mgr)
 
     if not agent._ollama.is_available():
         console.print(
