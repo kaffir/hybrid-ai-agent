@@ -1,27 +1,34 @@
 # Hybrid AI Coding Agent
 
-A security-first AI coding agent that intelligently routes tasks between local LLMs (Gemma 4) and cloud APIs (Claude) based on task complexity, with full human-in-the-loop controls.
+A security-first AI coding agent that intelligently routes tasks between local LLMs (Gemma 4) and cloud APIs (Claude) based on task complexity. Features a multi-step ReAct tool loop, git branch isolation for safe file manipulation, conversation memory, and full human-in-the-loop controls.
 
 ## Architecture
 
 ```
-User Request → Rule-Based Router → Model Resolver → LLM → Response
-                    │                     │
-              ┌─────┼─────┐         ┌────┼────┐
-              ▼     ▼     ▼         ▼    ▼    ▼
-           SIMPLE MEDIUM COMPLEX  E4B  26B  Claude
-            │       │       │      │    │     │
-            └───────┴───┬───┘      └────┴──┬──┘
-                        │                  │
-                   No LLM in          Mode-aware
-                   routing path       (HYBRID/LOCAL_ONLY)
+User Request → Router → Model Resolver → ReAct Loop
+                 │            │              │
+           ┌─────┼─────┐     │     ┌────────┼────────┐
+           ▼     ▼     ▼     │     ▼        ▼        ▼
+        SIMPLE MEDIUM COMPLEX │  Reason → Tool Call → Observe
+           │     │     │      │     │        │        │
+           ▼     ▼     ▼      │     │   ┌────┼────┐   │
+         E4B   26B  Claude    │     │   ▼    ▼    ▼   │
+                              │     │  File Shell Git  │
+                              │     │   │    │    │    │
+                              │     └───┴────┴────┘───┘
+                              │         Security Pipeline
+                              │     (3-gate validation + approval)
+                              │
+                         Mode-aware
+                    (HYBRID / LOCAL_ONLY)
 ```
 
 ### Key Design Principles
 
 - **Security-first**: Zero-tolerance for security tasks in local-only mode, OWASP LLM Top 10 coverage, three-gate command validation
-- **Human-in-the-loop**: Every file write, shell command, and file deletion requires explicit approval
+- **Human-in-the-loop**: Every file write, shell command, and file deletion requires explicit approval with risk classification
 - **Rule-based routing**: No LLM in the routing path — prevents prompt injection from manipulating task classification
+- **Git branch isolation**: Agent file modifications happen on dedicated branches, never on main directly
 - **Defense-in-depth**: Docker sandbox + command allowlist + pattern blocklist + human approval + output sanitization
 
 ### Components
@@ -30,6 +37,10 @@ User Request → Rule-Based Router → Model Resolver → LLM → Response
 |---|---|
 | Rule Router | Classifies tasks into SIMPLE/MEDIUM/COMPLEX tiers using keyword matching |
 | Model Resolver | Maps (tier + mode) to target model with disclaimer flags |
+| ReAct Loop | Multi-step reason → tool call → observe → repeat cycle |
+| Tool Executor | Bridges LLM tool calls to FileOps/ShellExec/GitOps through security pipeline |
+| Conversation Memory | Sliding window history for multi-turn interactions |
+| Git Branch Manager | Auto-creates agent branches, auto-commits, PR-style diff review |
 | Ollama Client | Communicates with local Gemma 4 models via native API |
 | Claude Client | Communicates with Anthropic's Messages API |
 | Health Checker | Background monitoring of Claude API availability (60s polling) |
@@ -106,7 +117,7 @@ cp .env.example .env
 ### 5. Verify Installation
 
 ```bash
-# Run the test suite (155 tests)
+# Run the test suite (227 tests)
 pytest tests/ -v --tb=short
 
 # Quick security validation
@@ -134,41 +145,90 @@ python -m src.main
 
 ### Sample Interactions
 
-#### Simple Task (routes to Gemma 4 E4B)
+#### Autonomous Code Exploration (ReAct Loop)
 
 ```
-> Format this Python function to follow PEP 8
+> List all Python files and tell me about the project structure
 
-[Generating... SIMPLE tier, 30s timeout, Ctrl+C to cancel]
-[Router: SIMPLE → gemma4:e4b]
+[MEDIUM tier → gemma4:26b, 120s timeout, Ctrl+C to cancel]
+  [Step 1/10] I will list the files to understand the project.
+  [Tool: list_files({'path': '.', 'recursive': true})]
+  [Step 2/10] Let me read the main entry point.
+  [Tool: read_file({'path': 'src/main.py'})]
+  [Step 3/10] Based on my analysis...
+[Tools used: list_files, read_file]
 
-Here is the formatted function:
+This is a Python project with the following structure:
+- src/main.py — CLI entry point with command handling
+- src/router/ — Task classification engine
 ...
 ```
 
-#### Medium Task (routes to Gemma 4 26B)
+#### Multi-Turn Conversation (Memory)
 
 ```
-> Write unit tests for a function that calculates tax
+> Read src/main.py and explain the create_agent function
 
-[Generating... MEDIUM tier, 120s timeout, Ctrl+C to cancel]
-[Router: MEDIUM → gemma4:26b]
+[Agent reads file, explains function]
 
-Here are the unit tests:
-...
+> Now refactor it to be shorter
+
+[Agent REMEMBERS which file — no need to repeat]
+[Branch created: agent/task-a1b2c3]
+
+  approve / deny / edit → approve
+
+> /diff summary
+  src/main.py | 45 +++++-----
+  1 file changed, 20 insertions(+), 25 deletions(-)
+
+> /apply
+  Merged agent/task-a1b2c3 into main (1 commit).
 ```
 
-#### Security Task in LOCAL_ONLY Mode (shows disclaimer)
+#### Shell Command with Security Gates
+
+```
+> Run the test suite for the payment module
+
+┌─ Shell Execution Request ─────────────────────┐
+│ Command:  pytest tests/test_payment.py -v     │
+│ Risk:     🟢 LOW                              │
+└───────────────────────────────────────────────┘
+
+  approve / deny / edit  → approve
+
+12 tests passed, 0 failed
+```
+
+#### Package Installation with Security Assessment
+
+```
+> Install the requests library
+
+┌─ ⚠️  Package Installation Request ────────────┐
+│ Command:     pip install requests              │
+│ Risk:        🟠 HIGH — package installation    │
+│                                                │
+│ Assessment:                                    │
+│ Reason:      Required for HTTP client.         │
+│ Security:    ✅ Well-maintained, widely used.  │
+│                                                │
+│ ⓘ  AI-generated assessment. Verify            │
+│    independently for unfamiliar packages.      │
+└────────────────────────────────────────────────┘
+
+  approve / deny / edit  → approve
+```
+
+#### Security Task in LOCAL_ONLY Mode
 
 ```
 > Check for SQL injection vulnerabilities
 
-[Generating... COMPLEX tier, 180s timeout, Ctrl+C to cancel]
-
 ┌─ Security Disclaimer ─────────────────────────┐
 │ ⚠️  SECURITY TASK — LOCAL MODEL ONLY          │
 │                                                │
-│ This task involves security-sensitive analysis. │
 │ Limitations:                                   │
 │   • May miss subtle vulnerabilities            │
 │   • Should NOT be treated as a security audit  │
@@ -179,56 +239,9 @@ Here are the unit tests:
 
 Proceed with local analysis? [y/n]: y
 
-[Router: COMPLEX → gemma4:26b]
-...
-
 ⚠️  This security analysis was performed by a local model.
    Add to pending queue for cloud re-analysis? [y/n]: y
    Queued as a1b2c3. Use '/retry a1b2c3' in HYBRID mode.
-```
-
-#### Shell Command Approval Flow
-
-```
-> Run the test suite for the payment module
-
-[Agent] Requesting shell execution:
-
-┌─ Shell Execution Request ─────────────────────┐
-│ Command:  pytest tests/test_payment.py -v     │
-│ Risk:     🟢 LOW                              │
-└───────────────────────────────────────────────┘
-
-  approve / deny / edit  → approve
-
-[Executing...]
-12 tests passed, 0 failed
-```
-
-#### Package Installation with Security Assessment
-
-```
-> Install the requests library for HTTP calls
-
-[Agent] Requesting package installation:
-
-┌─ ⚠️  Package Installation Request ────────────┐
-│ Command:     pip install requests              │
-│ Risk:        🟠 HIGH — package installation    │
-│                                                │
-│ Assessment:                                    │
-│ Name:        requests                          │
-│ Reason:      Required for HTTP client          │
-│              functionality in the API module.  │
-│                                                │
-│ Security:    ✅ Well-maintained, widely used,  │
-│              active CVE monitoring.            │
-│                                                │
-│ ⓘ  This assessment is AI-generated. Verify    │
-│    security claims independently.              │
-└────────────────────────────────────────────────┘
-
-  approve / deny / edit  → approve
 ```
 
 ### CLI Commands
@@ -238,13 +251,20 @@ Proceed with local analysis? [y/n]: y
 | `/mode` | Show current operation mode |
 | `/mode hybrid` | Switch to HYBRID mode (local + cloud) |
 | `/mode local` | Switch to LOCAL_ONLY mode |
-| `/pending` | List all pending tasks |
+| `/history` | Show conversation history |
+| `/clear` | Clear conversation history |
+| `/diff` | Show diff between agent branch and main |
+| `/diff summary` | Show change summary (files, insertions, deletions) |
+| `/apply` | Merge agent branch into main |
+| `/discard` | Delete agent branch and all changes |
+| `/branches` | List all agent branches |
+| `/pending` | List pending tasks (blocked by API outage) |
 | `/retry <id>` | Retry a specific pending task |
 | `/retry all` | Retry all pending tasks |
 | `/pending discard <id>` | Discard a pending task |
 | `/pending clear` | Clear all pending tasks |
 | `/health` | Show API health status and tier timeouts |
-| `/quit` | Exit the agent |
+| `/quit` | Exit (prompts to apply/discard active branch) |
 | `Ctrl+C` | Cancel the current request |
 
 ### Operation Modes
@@ -256,30 +276,42 @@ Proceed with local analysis? [y/n]: y
 
 ---
 
+## Git Branch Isolation
+
+When the agent modifies files, it automatically creates a dedicated git branch:
+
+```
+main ────────────────────────────────── main (after /apply)
+  │                                       ▲
+  └── agent/task-a1b2c3 ── commit ── commit ─┘
+       (auto-created)    (auto-commit   (auto-commit
+                          on write)      on write)
+```
+
+- **Git-aware mode**: Workspace has `.git` → branch isolation active
+- **Git-unaware mode**: Workspace has no `.git` → direct writes with approval only
+- Agent never commits to `main` directly
+- `/apply` merges with confirmation, `/discard` deletes branch
+- `/quit` prompts to handle active branches before exit
+
+---
+
 ## Docker Sandbox (Production)
 
 For sandboxed execution where the agent runs inside an isolated container.
 
-### Build the Sandbox
+### Build and Run
 
 ```bash
 docker compose build
-```
 
-### Run with a Project Workspace
-
-```bash
-# Set your project path and API key
 export PROJECT_PATH=/path/to/your/project
 export ANTHROPIC_API_KEY=sk-ant-your-key-here
 
-# Run the agent in sandbox
 docker compose run --rm agent
 ```
 
 ### Sandbox Security Controls
-
-The Docker sandbox provides:
 
 - **Non-root execution** — agent runs as `agent:1000`
 - **Read-only filesystem** — only `/workspace` and `/tmp` are writable
@@ -295,11 +327,9 @@ The Docker sandbox provides:
 
 ### Three-Gate Command Validation
 
-Every shell command passes through:
-
-1. **Gate 1 (Parser)** — Detects command chaining, subshells, pipes, redirects, and encoding obfuscation
-2. **Gate 2 (Policy)** — Checks against command allowlist and blocked patterns. Enhanced approval for `rm` (requires justification) and `pip install` (requires security assessment)
-3. **Gate 3 (Human)** — Displays command with risk level and waits for approve/deny/edit
+1. **Gate 1 (Parser)** — Detects command chaining, subshells, pipes, redirects, encoding obfuscation
+2. **Gate 2 (Policy)** — Checks command allowlist and blocked patterns. Enhanced approval for `rm` and `pip install`
+3. **Gate 3 (Human)** — Displays command with risk level, waits for approve/deny/edit
 
 ### Risk Levels
 
@@ -320,35 +350,43 @@ Every shell command passes through:
 | LLM05: Supply Chain | Pinned dependencies; `pip install` requires security assessment |
 | LLM06: Sensitive Info | Audit logger redacts credentials; env vars stripped from child processes |
 
-### File System Protection
+### ReAct Loop Safety
 
-- All paths validated against workspace boundary
-- Path traversal (`../`) detected and blocked
-- Symlinks resolved and re-validated
-- Directory deletion not permitted
-- Wildcard deletion (`rm *`) not permitted
+- Maximum iteration limit (default 10, configurable)
+- Per-tier timeouts: SIMPLE 30s, MEDIUM 120s, COMPLEX 180s
+- Ctrl+C cancellation at any point
+- Tool calls validated against registry — no arbitrary tool execution
+- All tool results sanitized before display
 
 ---
 
 ## Configuration
 
-### Routing Rules (config/routing_rules.yml)
+### Environment Variables
 
-Customize task classification by editing keywords:
+| Variable | Default | Description |
+|---|---|---|
+| `AGENT_MODE` | `HYBRID` | Operation mode: `HYBRID` or `LOCAL_ONLY` |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API endpoint |
+| `OLLAMA_PRIMARY_MODEL` | `gemma4:26b` | Primary local model |
+| `OLLAMA_FALLBACK_MODEL` | `gemma4:e4b` | Fallback local model |
+| `CLAUDE_MODEL` | `claude-sonnet-4-20250514` | Claude model for complex tasks |
+| `ANTHROPIC_API_KEY` | (none) | Required for HYBRID mode |
+| `WORKSPACE_ROOT` | `./_workspace` | Workspace directory |
+| `MAX_ITERATIONS` | `10` | ReAct loop iteration limit |
+| `MAX_CONVERSATION_TURNS` | `20` | Conversation memory window |
+| `AUDIT_LOG_ENABLED` | `true` | Enable/disable audit logging |
+
+### Routing Rules (config/routing_rules.yml)
 
 ```yaml
 security_override:
   keywords:
-    - "your-custom-security-keyword"
-
+    - "your-custom-keyword"
 task_keywords:
   SIMPLE:
     phrases:
-      - "your custom simple phrase"
-  MEDIUM:
-    phrases:
-      - "your custom medium phrase"
-
+      - "your custom phrase"
 tier_timeouts:
   SIMPLE: 30
   MEDIUM: 120
@@ -356,8 +394,6 @@ tier_timeouts:
 ```
 
 ### Command Allowlist (config/allowed_commands.yml)
-
-Add or remove permitted shell commands:
 
 ```yaml
 allowed:
@@ -372,134 +408,55 @@ allowed:
 
 ### Ollama Issues
 
-#### Cannot connect to Ollama
-
 ```bash
-# Check if Ollama is running
+# Not running?
 curl -s http://localhost:11434/api/version
-
-# If not running, start it
 ollama serve
 
-# Or restart via menu bar icon on macOS
-```
-
-#### Model not found
-
-```bash
-# Check available models
+# Model not found?
 ollama list
-
-# Pull the missing model
 ollama pull gemma4:26b
-ollama pull gemma4:e4b
-```
 
-#### Slow response from Gemma 4 26B
-
-```bash
-# Check if model is fully loaded in GPU
-ollama ps
-
-# Ensure no other heavy apps are consuming memory
-# Close browsers, IDEs with large projects, etc.
-
-# Reduce context window if needed
-cat << EOF > Modelfile
-FROM gemma4:26b
-PARAMETER num_ctx 8192
-EOF
-ollama create gemma4-custom -f Modelfile
-```
-
-#### Ollama listening on 0.0.0.0 (security risk)
-
-```bash
-# Fix: Bind to localhost only
+# Listening on 0.0.0.0? (security risk)
 export OLLAMA_HOST=127.0.0.1:11434
-# Add to ~/.zshrc for persistence
-
-# Restart Ollama and verify
-lsof -i :11434
-# Should show 127.0.0.1 or localhost
 ```
 
 ### Claude API Issues
 
-#### ANTHROPIC_API_KEY is not set
-
 ```bash
-# Check your .env file
-cat .env | grep ANTHROPIC
-
-# If missing, add it
-echo 'ANTHROPIC_API_KEY=sk-ant-your-key-here' >> .env
-```
-
-#### Claude API rate limit exceeded
-
-The agent will automatically fall back to local models for non-security tasks. Security tasks will be queued. Wait a few minutes and use `/retry all`.
-
-#### Claude API unavailable
-
-```bash
-# Check health status inside the agent CLI:
+# Check health inside agent:
 /health
 
-# The health checker polls every 60 seconds
-# You'll be notified when API recovers
+# No API key?
+echo 'ANTHROPIC_API_KEY=sk-ant-your-key' >> .env
+# Or use LOCAL_ONLY mode
 ```
 
-### Python / Dependency Issues
-
-#### ModuleNotFoundError: No module named 'src'
+### Git Branch Issues
 
 ```bash
-# Ensure you're in the project directory with venv activated
-cd hybrid-ai-agent
-source .venv/bin/activate
+# Stuck on agent branch?
+git checkout main
+git branch -D agent/task-XXXXXXXX
 
-# Reinstall in editable mode
+# Agent not creating branches?
+# Workspace must be a git repo: git init
+```
+
+### Python Issues
+
+```bash
+# Module not found?
+source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-#### Test failures after changes
+### Docker Issues
 
 ```bash
-# Run the full suite
-pytest tests/ -v --tb=short
-
-# Run only security tests (most critical)
-pytest tests/test_security.py -v
-
-# Run with detailed output on failure
-pytest tests/ -v --tb=long
-```
-
-### Docker Sandbox Issues
-
-#### docker compose build fails
-
-```bash
-# Ensure Docker Desktop is running
-docker info
-
-# Build with no cache
-docker compose build --no-cache
-```
-
-#### Permission denied inside container
-
-The container runs as non-root (`agent:1000`). Only `/workspace` and `/tmp` are writable. This is by design.
-
-#### Cannot connect to Ollama from container
-
-```bash
-# Verify host.docker.internal resolves
-docker run --rm alpine ping -c 1 host.docker.internal
-
-# Check Ollama is listening on host
-curl http://localhost:11434/api/version
+# Can't connect to Ollama from container?
+docker run --rm alpine/curl \
+  curl -s http://host.docker.internal:11434/api/version
 ```
 
 ---
@@ -507,17 +464,21 @@ curl http://localhost:11434/api/version
 ## Testing
 
 ```bash
-# Run all 155 tests
+# All 227 tests
 pytest tests/ -v --tb=short
 
-# Run by category
-pytest tests/test_router.py -v        # 40 routing tests
-pytest tests/test_sanitizer.py -v     # 22 sanitizer tests
-pytest tests/test_permissions.py -v   # 8 permission tests
-pytest tests/test_integration.py -v   # 28 integration tests
-pytest tests/test_security.py -v      # 57 security attack tests
+# By category
+pytest tests/test_router.py -v          # 40 routing tests
+pytest tests/test_sanitizer.py -v       # 22 sanitizer tests
+pytest tests/test_permissions.py -v     # 8 permission tests
+pytest tests/test_integration.py -v     # 28 integration tests
+pytest tests/test_security.py -v        # 57 security attack tests
+pytest tests/test_tool_interface.py -v  # 18 tool interface tests
+pytest tests/test_tool_executor.py -v   # 13 tool executor tests
+pytest tests/test_memory.py -v          # 14 memory tests
+pytest tests/test_git_branch.py -v      # 27 git branch tests
 
-# Run linter with security rules
+# Lint
 ruff check src/ tests/
 ```
 
@@ -528,18 +489,38 @@ ruff check src/ tests/
 ```
 hybrid-ai-agent/
 ├── src/
-│   ├── main.py              # CLI entry point
-│   ├── router/              # Task classification
-│   ├── agent/               # ReAct loop orchestration
-│   ├── models/              # LLM clients + health/queue
-│   ├── tools/               # Sandboxed file/shell/git ops
-│   └── security/            # Permissions, sanitizer, audit
-├── config/                  # Routing rules, command policies
-├── tests/                   # 155 tests (security-focused)
-├── Dockerfile               # Sandbox container definition
-├── docker-compose.yml       # Sandbox orchestration
-├── BACKLOG.md              # Deferred items for next phase
-└── README.md               # This file
+│   ├── main.py                # CLI entry point
+│   ├── router/
+│   │   └── rule_router.py     # Task classification
+│   ├── agent/
+│   │   ├── graph.py           # ReAct loop orchestration
+│   │   ├── tool_interface.py  # Tool call format + parser
+│   │   ├── tool_executor.py   # Security pipeline bridge
+│   │   └── memory.py          # Conversation history
+│   ├── models/
+│   │   ├── model_resolver.py  # Mode-aware model mapping
+│   │   ├── ollama_client.py   # Local LLM client
+│   │   ├── claude_client.py   # Cloud LLM client
+│   │   ├── health_checker.py  # API availability monitor
+│   │   └── pending_queue.py   # Blocked task persistence
+│   ├── tools/
+│   │   ├── file_ops.py        # Sandboxed file operations
+│   │   ├── shell_exec.py      # Three-gate command validation
+│   │   ├── git_ops.py         # Git command wrapper
+│   │   └── git_branch.py      # Branch isolation manager
+│   └── security/
+│       ├── permissions.py     # Human-in-the-loop gates
+│       ├── sanitizer.py       # Injection detection + redaction
+│       └── audit.py           # Action logging
+├── config/
+│   ├── routing_rules.yml      # Routing keywords + timeouts
+│   ├── allowed_commands.yml   # Command whitelist
+│   └── blocked_patterns.yml   # Dangerous pattern blocklist
+├── tests/                     # 227 tests (security-focused)
+├── Dockerfile                 # Sandbox container
+├── docker-compose.yml         # Sandbox orchestration
+├── BACKLOG.md                # Future phase items
+└── README.md                 # This file
 ```
 
 ---
@@ -547,4 +528,3 @@ hybrid-ai-agent/
 ## License
 
 MIT - Use freely, modify as needed, contribute back if you can.
-
