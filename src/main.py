@@ -32,6 +32,7 @@ from src.models.claude_client import ClaudeClient
 from src.models.health_checker import HealthChecker
 from src.models.pending_queue import PendingTaskQueue, PendingTask
 from src.agent.graph import Agent
+from src.agent.memory import ConversationMemory
 from src.agent.tool_executor import ToolExecutor
 from src.tools.file_ops import FileOps
 from src.tools.shell_exec import ShellExec
@@ -103,6 +104,9 @@ def create_agent() -> Agent:
     shell_exec = ShellExec(workspace_root=workspace)
     git_ops = GitOps(shell=shell_exec)
 
+    max_turns = int(os.getenv('MAX_CONVERSATION_TURNS', '20'))
+    memory = ConversationMemory(max_turns=max_turns)
+
     branch_manager = GitBranchManager(shell=shell_exec)
 
     tool_executor = ToolExecutor(
@@ -155,6 +159,7 @@ def create_agent() -> Agent:
         tool_executor=tool_executor,
         branch_manager=branch_manager,
         sanitizer=sanitizer,
+        memory=memory,
         default_max_iterations=max_iterations,
     )
 
@@ -180,6 +185,10 @@ def show_banner(agent: Agent) -> None:
         banner.append(" | Claude API", style="dim")
     banner.append(
         "\n   Security: Zero-tolerance | Human-in-the-loop",
+        style="dim",
+    )
+    banner.append(
+        "\n   Memory:   Conversation history enabled",
         style="dim",
     )
     banner.append(
@@ -380,6 +389,18 @@ def handle_command(
                 console.print(f"   [red]{state.error}[/red]")
             else:
                 console.print(state.response)
+        return True
+
+    elif cmd == "/history":
+        summary = agent._memory.get_summary()
+        console.print(f"   {summary}")
+        return True
+
+    elif cmd == "/clear":
+        agent._memory.clear()
+        console.print(
+            "   [green]Conversation history cleared.[/green]"
+        )
         return True
 
     elif cmd == "/diff":

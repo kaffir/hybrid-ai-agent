@@ -55,6 +55,7 @@ from src.agent.tool_interface import (
 )
 from src.agent.tool_executor import ToolExecutor
 from src.tools.git_branch import GitBranchManager
+from src.agent.memory import ConversationMemory
 from src.security.sanitizer import Sanitizer
 
 
@@ -99,6 +100,7 @@ class Agent:
         tool_executor: ToolExecutor,
         branch_manager: GitBranchManager,
         sanitizer: Sanitizer,
+        memory: ConversationMemory,
         system_prompt: Optional[str] = None,
         config_path: str = "config/routing_rules.yml",
         default_max_iterations: int = 10,
@@ -112,6 +114,7 @@ class Agent:
         self._executor = tool_executor
         self._branch_mgr = branch_manager
         self._sanitizer = sanitizer
+        self._memory = memory
         self._system_prompt = build_system_prompt(
             system_prompt or ""
         )
@@ -238,10 +241,10 @@ class Agent:
           4. If final answer → return
           5. If max iterations → force stop
         """
-        # Build conversation history
-        messages: list[dict] = [
-            {"role": "user", "content": state.user_request},
-        ]
+        # Build conversation history from memory
+        # Include prior turns for context, plus current request
+        self._memory.add_user_message(state.user_request)
+        messages: list[dict] = self._memory.get_messages()
 
         for iteration in range(state.max_iterations):
             state.iteration = iteration + 1
@@ -277,6 +280,9 @@ class Agent:
             # ── Check for final answer ──
             if parsed.is_final:
                 state.response = parsed.final_answer or ""
+                self._memory.add_assistant_message(
+                    state.response
+                )
                 return state
 
             # ── Check for tool calls ──
@@ -292,15 +298,15 @@ class Agent:
                 tool_result = self._executor.execute(tool_call)
                 state.tool_calls_made.append(tool_call.tool)
 
-                # Add assistant response + tool result to history
-                messages.append({
-                    "role": "assistant",
-                    "content": llm_response,
-                })
-                messages.append({
-                    "role": "user",
-                    "content": tool_result.format_for_llm(),
-                })
+                # Add to conversation history
+                self._memory.add_assistant_message(llm_response)
+                self._memory.add_tool_result(
+                    tool_call.tool,
+                    tool_result.format_for_llm(),
+                )
+
+                # Rebuild messages from memory for next iteration
+                messages = self._memory.get_messages()
 
                 continue
 
@@ -328,6 +334,7 @@ class Agent:
             # LLM responded with plain text (no tags)
             # Treat as final answer
             state.response = parsed.reasoning or llm_response
+            self._memory.add_assistant_message(state.response)
             return state
 
         # Max iterations reached
