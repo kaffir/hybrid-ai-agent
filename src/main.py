@@ -36,6 +36,7 @@ from src.agent.tool_executor import ToolExecutor
 from src.tools.file_ops import FileOps
 from src.tools.shell_exec import ShellExec
 from src.tools.git_ops import GitOps
+from src.tools.git_branch import GitBranchManager
 from src.security.permissions import PermissionGate
 from src.security.sanitizer import Sanitizer
 from src.security.audit import AuditLogger
@@ -102,6 +103,8 @@ def create_agent() -> Agent:
     shell_exec = ShellExec(workspace_root=workspace)
     git_ops = GitOps(shell=shell_exec)
 
+    branch_manager = GitBranchManager(shell=shell_exec)
+
     tool_executor = ToolExecutor(
         file_ops=file_ops,
         shell_exec=shell_exec,
@@ -109,6 +112,7 @@ def create_agent() -> Agent:
         permission_gate=permission_gate,
         audit_logger=audit_logger,
         agent_mode=agent_mode.value,
+        branch_manager=branch_manager,
     )
 
     # Health checker
@@ -149,6 +153,7 @@ def create_agent() -> Agent:
         health_checker=health_checker,
         pending_queue=pending_queue,
         tool_executor=tool_executor,
+        branch_manager=branch_manager,
         sanitizer=sanitizer,
         default_max_iterations=max_iterations,
     )
@@ -375,6 +380,90 @@ def handle_command(
                 console.print(f"   [red]{state.error}[/red]")
             else:
                 console.print(state.response)
+        return True
+
+    elif cmd == "/diff":
+        branch_mgr = agent._branch_mgr
+        if not branch_mgr or not branch_mgr.has_active_branch:
+            console.print("   No active agent branch.")
+            return True
+        if len(parts) >= 2 and parts[1] == "summary":
+            console.print(branch_mgr.get_diff_summary())
+        else:
+            console.print(branch_mgr.get_diff())
+        return True
+
+    elif cmd == "/apply":
+        branch_mgr = agent._branch_mgr
+        if not branch_mgr or not branch_mgr.has_active_branch:
+            console.print("   No active agent branch to apply.")
+            return True
+        # Show summary before merging
+        console.print(
+            "[bold]Changes to merge:[/bold]"
+        )
+        console.print(branch_mgr.get_diff_summary())
+        try:
+            answer = console.input(
+                "\n   Merge into "
+                f"{branch_mgr.current_branch.base_branch}? "
+                "[y/n]: "
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            answer = "n"
+        if answer in ("y", "yes"):
+            success, msg = branch_mgr.apply()
+            if success:
+                console.print(f"   [green]{msg}[/green]")
+            else:
+                console.print(f"   [red]{msg}[/red]")
+        else:
+            console.print("   [dim]Merge cancelled.[/dim]")
+        return True
+
+    elif cmd == "/discard":
+        branch_mgr = agent._branch_mgr
+        if not branch_mgr or not branch_mgr.has_active_branch:
+            console.print(
+                "   No active agent branch to discard."
+            )
+            return True
+        branch_name = branch_mgr.current_branch.branch_name
+        try:
+            answer = console.input(
+                f"   Discard {branch_name} and all changes? "
+                "[y/n]: "
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            answer = "n"
+        if answer in ("y", "yes"):
+            success, msg = branch_mgr.discard()
+            if success:
+                console.print(f"   [yellow]{msg}[/yellow]")
+            else:
+                console.print(f"   [red]{msg}[/red]")
+        else:
+            console.print("   [dim]Discard cancelled.[/dim]")
+        return True
+
+    elif cmd == "/branches":
+        branch_mgr = agent._branch_mgr
+        if not branch_mgr:
+            console.print("   Git branch manager not available.")
+            return True
+        branches = branch_mgr.list_agent_branches()
+        if not branches:
+            console.print("   No agent branches found.")
+        else:
+            console.print("   Agent branches:")
+            for b in branches:
+                active = (
+                    " [green](active)[/green]"
+                    if branch_mgr.has_active_branch
+                    and branch_mgr.current_branch.branch_name == b
+                    else ""
+                )
+                console.print(f"     • {b}{active}")
         return True
 
     elif cmd == "/health":

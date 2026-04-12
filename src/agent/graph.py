@@ -54,6 +54,7 @@ from src.agent.tool_interface import (
     parse_llm_output,
 )
 from src.agent.tool_executor import ToolExecutor
+from src.tools.git_branch import GitBranchManager
 from src.security.sanitizer import Sanitizer
 
 
@@ -96,6 +97,7 @@ class Agent:
         health_checker: HealthChecker,
         pending_queue: PendingTaskQueue,
         tool_executor: ToolExecutor,
+        branch_manager: GitBranchManager,
         sanitizer: Sanitizer,
         system_prompt: Optional[str] = None,
         config_path: str = "config/routing_rules.yml",
@@ -108,6 +110,7 @@ class Agent:
         self._health = health_checker
         self._queue = pending_queue
         self._executor = tool_executor
+        self._branch_mgr = branch_manager
         self._sanitizer = sanitizer
         self._system_prompt = build_system_prompt(
             system_prompt or ""
@@ -185,7 +188,16 @@ class Agent:
                 state.model_assignment.requires_disclaimer
             )
 
-            # ── Step 4: Run ReAct loop ──
+            # ── Step 4: Create agent branch for file safety ──
+            if self._branch_mgr:
+                branch = self._branch_mgr.start_task()
+                if branch:
+                    console.print(
+                        f"[dim]  [Branch: {branch.branch_name}]"
+                        f"[/dim]"
+                    )
+
+            # ── Step 5: Run ReAct loop ──
             timeout = self.get_timeout_for_tier(
                 state.routing_result.tier
             )

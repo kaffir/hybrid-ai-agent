@@ -27,6 +27,7 @@ from src.agent.tool_interface import (
 from src.tools.file_ops import FileOps
 from src.tools.shell_exec import ShellExec
 from src.tools.git_ops import GitOps
+from src.tools.git_branch import GitBranchManager
 from src.security.permissions import PermissionGate
 from src.security.audit import AuditLogger
 
@@ -50,6 +51,7 @@ class ToolExecutor:
         permission_gate: PermissionGate,
         audit_logger: AuditLogger,
         agent_mode: str = "HYBRID",
+        branch_manager: GitBranchManager | None = None,
     ) -> None:
         self._file_ops = file_ops
         self._shell = shell_exec
@@ -57,6 +59,7 @@ class ToolExecutor:
         self._permissions = permission_gate
         self._audit = audit_logger
         self._agent_mode = agent_mode
+        self._branch_mgr = branch_manager
 
     def set_agent_mode(self, mode: str) -> None:
         """Update agent mode for audit logging."""
@@ -178,6 +181,12 @@ class ToolExecutor:
         # Execute the write
         exec_result = self._file_ops.execute_write(path, content)
         if exec_result.success:
+            # Auto-commit to agent branch if active
+            if self._branch_mgr and self._branch_mgr.has_active_branch:
+                self._branch_mgr.commit_change(
+                    f"Agent: write {path}",
+                    files=[path],
+                )
             return ToolResult(
                 tool="write_file",
                 success=True,
@@ -267,6 +276,12 @@ class ToolExecutor:
         # Execute the delete
         exec_result = self._file_ops.execute_delete(path)
         if exec_result.success:
+            # Auto-commit to agent branch if active
+            if self._branch_mgr and self._branch_mgr.has_active_branch:
+                self._branch_mgr.commit_change(
+                    f"Agent: delete {path}",
+                    files=[path],
+                )
             return ToolResult(
                 tool="delete_file",
                 success=True,
