@@ -25,13 +25,20 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from src.router.rule_router import RuleRouter
+from src.router.rule_router import RuleRouter, Tier
 from src.models.model_resolver import ModelResolver, AgentMode
 from src.models.ollama_client import OllamaClient
 from src.models.claude_client import ClaudeClient
 from src.models.health_checker import HealthChecker
-from src.models.pending_queue import PendingTaskQueue
+from src.models.pending_queue import PendingTaskQueue, PendingTask
 from src.agent.graph import Agent
+from src.agent.tool_executor import ToolExecutor
+from src.tools.file_ops import FileOps
+from src.tools.shell_exec import ShellExec
+from src.tools.git_ops import GitOps
+from src.security.permissions import PermissionGate
+from src.security.sanitizer import Sanitizer
+from src.security.audit import AuditLogger
 
 
 console = Console()
@@ -44,19 +51,28 @@ def create_agent() -> Agent:
     ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     primary_model = os.getenv("OLLAMA_PRIMARY_MODEL", "gemma4:26b")
     fallback_model = os.getenv("OLLAMA_FALLBACK_MODEL", "gemma4:e4b")
-    claude_model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-20250514")
+    claude_model = os.getenv(
+        "CLAUDE_MODEL", "claude-sonnet-4-20250514"
+    )
     agent_mode_str = os.getenv("AGENT_MODE", "HYBRID").upper()
-    workspace = os.getenv("WORKSPACE_ROOT", str(Path.cwd() / "_workspace"))
+    workspace = os.getenv(
+        "WORKSPACE_ROOT", str(Path.cwd() / "_workspace")
+    )
+    audit_enabled = os.getenv(
+        "AUDIT_LOG_ENABLED", "true"
+    ).lower() == "true"
+    max_iterations = int(os.getenv("MAX_ITERATIONS", "10"))
 
     try:
         agent_mode = AgentMode(agent_mode_str)
     except ValueError:
         console.print(
-            f"[yellow]Warning: Unknown AGENT_MODE '{agent_mode_str}', "
-            f"defaulting to HYBRID[/yellow]"
+            f"[yellow]Warning: Unknown AGENT_MODE "
+            f"'{agent_mode_str}', defaulting to HYBRID[/yellow]"
         )
         agent_mode = AgentMode.HYBRID
 
+    # ── Initialize components ──
     router = RuleRouter(config_path="config/routing_rules.yml")
     ollama = OllamaClient(base_url=ollama_url)
     claude = ClaudeClient(model=claude_model)
@@ -69,24 +85,52 @@ def create_agent() -> Agent:
     )
 
     pending_queue = PendingTaskQueue(workspace_root=workspace)
+    audit_logger = AuditLogger(
+        workspace_root=workspace, enabled=audit_enabled
+    )
+    sanitizer = Sanitizer()
 
+    # Security components
+    permission_gate = PermissionGate(
+        audit_fn=lambda action, details: audit_logger.log(
+            f"permission:{action}", details, agent_mode=agent_mode.value
+        )
+    )
+
+    # Tool layer
+    file_ops = FileOps(workspace_root=workspace)
+    shell_exec = ShellExec(workspace_root=workspace)
+    git_ops = GitOps(shell=shell_exec)
+
+    tool_executor = ToolExecutor(
+        file_ops=file_ops,
+        shell_exec=shell_exec,
+        git_ops=git_ops,
+        permission_gate=permission_gate,
+        audit_logger=audit_logger,
+        agent_mode=agent_mode.value,
+    )
+
+    # Health checker
     def on_recovery() -> None:
         pending_count = pending_queue.pending_count
         if pending_count > 0:
             console.print(
-                "\n[bold green]🔔 Claude API is back online![/bold green]"
+                "\n[bold green]"
+                "🔔 Claude API is back online!"
+                "[/bold green]"
             )
             console.print(
                 f"   You have {pending_count} pending task(s)."
             )
             console.print(
-                "   Use [bold]/retry all[/bold] or [bold]/pending[/bold] "
-                "to review.\n"
+                "   Use [bold]/retry all[/bold] or "
+                "[bold]/pending[/bold] to review.\n"
             )
 
     def on_failure(error: str) -> None:
         console.print(
-            f"\n[bold yellow]⚠️  Claude API is now unavailable: "
+            f"\n[bold yellow]⚠️  Claude API unavailable: "
             f"{error}[/bold yellow]\n"
         )
 
@@ -104,6 +148,9 @@ def create_agent() -> Agent:
         resolver=resolver,
         health_checker=health_checker,
         pending_queue=pending_queue,
+        tool_executor=tool_executor,
+        sanitizer=sanitizer,
+        default_max_iterations=max_iterations,
     )
 
     return agent
@@ -115,15 +162,30 @@ def show_banner(agent: Agent) -> None:
     mode_color = "green" if mode == "HYBRID" else "yellow"
 
     banner = Text()
-    banner.append("🤖 Hybrid AI Agent v0.1", style="bold white")
-    banner.append(" (LangGraph)\n", style="dim")
+    banner.append(
+        "🤖 Hybrid AI Agent v0.2", style="bold white"
+    )
+    banner.append(" (ReAct Loop)\n", style="dim")
     banner.append("   Mode:     ", style="dim")
     banner.append(f"{mode}\n", style=f"bold {mode_color}")
-    banner.append("   Models:   Gemma4-26B | Gemma4-E4B", style="dim")
+    banner.append(
+        "   Models:   Gemma4-26B | Gemma4-E4B", style="dim"
+    )
     if mode == "HYBRID":
         banner.append(" | Claude API", style="dim")
-    banner.append("\n   Security: Zero-tolerance | Human-in-the-loop", style="dim")
-    banner.append("\n   Tip:      Press Ctrl+C to cancel any request", style="dim")
+    banner.append(
+        "\n   Security: Zero-tolerance | Human-in-the-loop",
+        style="dim",
+    )
+    banner.append(
+        "\n   Tools:    read, write, list, search, "
+        "run, delete, git",
+        style="dim",
+    )
+    banner.append(
+        "\n   Tip:      Press Ctrl+C to cancel any request",
+        style="dim",
+    )
 
     console.print(Panel(banner, border_style="blue"))
 
@@ -132,17 +194,18 @@ def show_disclaimer(assignment) -> bool:
     """Show security disclaimer for LOCAL_ONLY mode."""
     console.print()
     console.print(Panel(
-        "[bold yellow]⚠️  SECURITY TASK — LOCAL MODEL ONLY[/bold yellow]\n\n"
+        "[bold yellow]⚠️  SECURITY TASK — LOCAL MODEL ONLY"
+        "[/bold yellow]\n\n"
         "This task involves security-sensitive analysis.\n"
         "You are running in LOCAL_ONLY mode — this response\n"
         f"is generated by [bold]{assignment.model}[/bold], "
         "NOT a frontier model.\n\n"
         "[bold]Limitations:[/bold]\n"
         "  • May miss subtle vulnerabilities\n"
-        "  • Cannot match cloud model depth on complex attack vectors\n"
+        "  • Cannot match cloud model depth\n"
         "  • Should NOT be treated as a security audit\n\n"
         "[bold]Recommendation:[/bold]\n"
-        "  Re-run this task in HYBRID mode with Claude API\n"
+        "  Re-run in HYBRID mode with Claude API\n"
         "  before deploying to production.",
         title="Security Disclaimer",
         border_style="yellow",
@@ -157,8 +220,10 @@ def show_disclaimer(assignment) -> bool:
         return False
 
 
-def offer_pending_queue(request: str, queue: PendingTaskQueue) -> None:
-    """Ask user if they want to queue for cloud re-analysis."""
+def offer_pending_queue(
+    request: str, queue: PendingTaskQueue
+) -> None:
+    """Ask user to queue for cloud re-analysis."""
     console.print(
         "\n[dim]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/dim]"
     )
@@ -169,10 +234,10 @@ def offer_pending_queue(request: str, queue: PendingTaskQueue) -> None:
 
     try:
         answer = console.input(
-            "   Add to pending queue for cloud re-analysis? [y/n]: "
+            "   Add to pending queue for cloud re-analysis? "
+            "[y/n]: "
         ).strip().lower()
         if answer in ("y", "yes"):
-            from src.models.pending_queue import PendingTask
             task = PendingTask.create(
                 original_request=request,
                 classification="security",
@@ -181,7 +246,8 @@ def offer_pending_queue(request: str, queue: PendingTaskQueue) -> None:
             task_id = queue.add(task)
             console.print(
                 f"   [green]Queued as {task_id}. "
-                f"Use '/retry {task_id}' in HYBRID mode.[/green]"
+                f"Use '/retry {task_id}' in HYBRID mode."
+                f"[/green]"
             )
     except (EOFError, KeyboardInterrupt):
         pass
@@ -204,7 +270,8 @@ def handle_command(
     elif cmd == "/mode":
         if len(parts) < 2:
             console.print(
-                f"   Current mode: [bold]{agent.mode.value}[/bold]"
+                f"   Current mode: [bold]{agent.mode.value}"
+                f"[/bold]"
             )
             return True
         mode_str = parts[1].upper()
@@ -214,15 +281,22 @@ def handle_command(
             new_mode = AgentMode(mode_str)
             agent.set_mode(new_mode)
             mode_color = (
-                "green" if new_mode == AgentMode.HYBRID else "yellow"
+                "green"
+                if new_mode == AgentMode.HYBRID
+                else "yellow"
             )
             console.print(
                 f"   [bold {mode_color}]Switched to "
-                f"{new_mode.value} mode.[/bold {mode_color}]"
+                f"{new_mode.value} mode."
+                f"[/bold {mode_color}]"
             )
-            if new_mode == AgentMode.HYBRID and queue.pending_count > 0:
+            if (
+                new_mode == AgentMode.HYBRID
+                and queue.pending_count > 0
+            ):
                 console.print(
-                    f"   You have {queue.pending_count} pending task(s). "
+                    f"   You have {queue.pending_count} "
+                    f"pending task(s). "
                     f"Use [bold]/pending[/bold] to review."
                 )
         except ValueError:
@@ -243,7 +317,9 @@ def handle_command(
             if queue.mark_discarded(task_id):
                 console.print(f"   Discarded task {task_id}.")
             else:
-                console.print(f"   [red]Task {task_id} not found.[/red]")
+                console.print(
+                    f"   [red]Task {task_id} not found.[/red]"
+                )
             return True
 
         tasks = queue.list_pending()
@@ -269,7 +345,9 @@ def handle_command(
 
     elif cmd == "/retry":
         if len(parts) < 2:
-            console.print("   Usage: /retry <task_id> or /retry all")
+            console.print(
+                "   Usage: /retry <task_id> or /retry all"
+            )
             return True
 
         if parts[1] == "all":
@@ -306,22 +384,24 @@ def handle_command(
             console.print("[bold green]Available[/bold green]")
         else:
             console.print(
-                f"[bold red]Unavailable[/bold red] "
+                "[bold red]Unavailable[/bold red] "
                 f"(failures: {status.consecutive_failures})"
             )
             if status.last_error:
-                console.print(f"   Last error: {status.last_error}")
-        console.print(f"   Agent mode: [bold]{agent.mode.value}[/bold]")
-        console.print(f"   Pending tasks: {agent.pending_count}")
-
-        # Show tier timeouts
+                console.print(
+                    f"   Last error: {status.last_error}"
+                )
+        console.print(
+            f"   Agent mode: [bold]{agent.mode.value}[/bold]"
+        )
+        console.print(
+            f"   Pending tasks: {agent.pending_count}"
+        )
         console.print("   Timeouts:")
         for tier_name in ("SIMPLE", "MEDIUM", "COMPLEX"):
-            from src.router.rule_router import Tier
             tier = Tier(tier_name)
             t = agent.get_timeout_for_tier(tier)
             console.print(f"     {tier_name}: {t:.0f}s")
-
         return True
 
     return False
@@ -349,8 +429,9 @@ def main() -> None:
     for model_name in [primary, fallback]:
         if not agent._ollama.is_model_available(model_name):
             console.print(
-                f"[bold red]Error: Model '{model_name}' not found. "
-                f"Run 'ollama pull {model_name}' first.[/bold red]"
+                f"[bold red]Error: Model '{model_name}' "
+                f"not found. Run 'ollama pull {model_name}' "
+                f"first.[/bold red]"
             )
             sys.exit(1)
 
@@ -359,7 +440,9 @@ def main() -> None:
     # ── Main loop ──
     while True:
         try:
-            user_input = console.input("[bold]> [/bold]").strip()
+            user_input = console.input(
+                "[bold]> [/bold]"
+            ).strip()
         except (EOFError, KeyboardInterrupt):
             console.print("\n[dim]Goodbye![/dim]")
             break
@@ -373,29 +456,34 @@ def main() -> None:
                 continue
 
         # Show generating indicator
-        tier = agent._router.classify(user_input).tier.value
-        timeout = agent.get_timeout_for_tier(
-            agent._router.classify(user_input).tier
-        )
+        routing = agent._router.classify(user_input)
+        timeout = agent.get_timeout_for_tier(routing.tier)
         console.print(
-            f"[dim][Generating... {tier} tier, "
+            f"[dim][{routing.tier.value} tier → "
+            f"{agent._resolver.resolve(routing.tier, routing.security_override).model}, "
             f"{timeout:.0f}s timeout, Ctrl+C to cancel][/dim]"
         )
 
-        # Process with interrupt handling
+        # Process with ReAct loop
         state = agent.process_request(user_input)
 
         if state.cancelled:
-            console.print(f"\n[yellow]{state.error}[/yellow]\n")
+            console.print(
+                f"\n[yellow]{state.error}[/yellow]\n"
+            )
             continue
 
         # Handle disclaimer flow
-        if state.requires_disclaimer and not state.disclaimer_shown:
+        if (
+            state.requires_disclaimer
+            and not state.disclaimer_shown
+        ):
             if not show_disclaimer(state.model_assignment):
-                console.print("   [dim]Task cancelled.[/dim]\n")
+                console.print(
+                    "   [dim]Task cancelled.[/dim]\n"
+                )
                 continue
             state.disclaimer_shown = True
-            # Re-process after disclaimer approval
             console.print(
                 "[dim][Generating with local model...][/dim]"
             )
@@ -405,15 +493,12 @@ def main() -> None:
         if state.error:
             console.print(f"\n[red]{state.error}[/red]\n")
         else:
-            if state.routing_result:
-                tier = state.routing_result.tier.value
-                model = (
-                    state.model_assignment.model
-                    if state.model_assignment
-                    else "unknown"
+            if state.tool_calls_made:
+                console.print(
+                    f"[dim][Tools used: "
+                    f"{', '.join(state.tool_calls_made)}]"
+                    f"[/dim]"
                 )
-                console.print(f"[dim][Router: {tier} → {model}][/dim]")
-
             console.print(f"\n{state.response}\n")
 
             if (
