@@ -34,6 +34,7 @@ from src.models.pending_queue import PendingTaskQueue, PendingTask
 from src.agent.graph import Agent
 from src.agent.memory import ConversationMemory
 from src.agent.scanner import WorkspaceScanner
+from src.agent.background import BackgroundTaskManager, TaskStatus
 from src.agent.tool_executor import ToolExecutor
 from src.tools.file_ops import FileOps
 from src.tools.shell_exec import ShellExec
@@ -171,7 +172,9 @@ def create_agent() -> Agent:
         default_max_iterations=max_iterations,
     )
 
+    bg_manager = BackgroundTaskManager(max_concurrent=3)
     agent._scanner = workspace_scanner
+    agent._bg_manager = bg_manager
     return agent
 
 
@@ -467,6 +470,198 @@ def handle_command(
         console.print(
             "   [green]Conversation history cleared.[/green]"
         )
+        return True
+
+    elif cmd == "/bg":
+        if len(parts) < 2:
+            console.print(
+                "   Usage: /bg <your request>"
+            )
+            return True
+
+        bg_request = " ".join(parts[1:])
+        bg_mgr = agent._bg_manager
+
+        def bg_execute(request):
+            """
+            Execute in background with isolated state.
+
+            Each background task gets:
+              - Its own conversation memory (no pollution)
+              - Silent output (no console bleed)
+              - Shared model clients (Ollama queues internally)
+              - Shared tool executor (approval gates still work)
+
+            Note: Git branch isolation is per-task via task ID,
+            so concurrent tasks create separate branches.
+            """
+            from src.agent.memory import ConversationMemory
+            from src.agent.graph import Agent
+
+            # Create isolated agent with fresh memory
+            bg_agent = Agent(
+                ollama_client=agent._ollama,
+                claude_client=agent._claude,
+                router=agent._router,
+                resolver=agent._resolver,
+                health_checker=agent._health,
+                pending_queue=agent._queue,
+                tool_executor=agent._executor,
+                branch_manager=agent._branch_mgr,
+                sanitizer=agent._sanitizer,
+                memory=ConversationMemory(max_turns=20),
+                silent=True,
+            )
+            return bg_agent.process_request(request)
+
+        task = bg_mgr.submit(
+            request=bg_request,
+            execute_fn=bg_execute,
+        )
+
+        if task is None:
+            console.print(
+                "[red]   Maximum concurrent tasks reached "
+                "(3). Wait for a task to complete or "
+                "use /cancel.[/red]"
+            )
+        else:
+            console.print(
+                f"   [green][{task.task_id}] Submitted.[/green]"
+            )
+            console.print(
+                "   Use [bold]/status[/bold] to check "
+                "progress."
+            )
+            active = bg_mgr.active_count
+            if active > 1:
+                console.print(
+                    f"   [dim]Note: {active} tasks running. "
+                    f"Ollama processes sequentially — "
+                    f"foreground requests may be slower."
+                    f"[/dim]"
+                )
+        return True
+
+    elif cmd == "/status":
+        bg_mgr = agent._bg_manager
+        tasks = bg_mgr.list_tasks()
+
+        if not tasks:
+            console.print("   No background tasks.")
+            return True
+
+        table = Table(title="Background Tasks")
+        table.add_column("ID", style="cyan")
+        table.add_column("Status")
+        table.add_column("Elapsed")
+        table.add_column("Request", max_width=45)
+
+        status_styles = {
+            TaskStatus.PENDING: "dim",
+            TaskStatus.RUNNING: "yellow",
+            TaskStatus.COMPLETED: "green",
+            TaskStatus.FAILED: "red",
+            TaskStatus.CANCELLED: "dim red",
+        }
+
+        for t in tasks:
+            style = status_styles.get(t.status, "white")
+            elapsed = f"{t.elapsed_seconds:.0f}s"
+            table.add_row(
+                t.task_id,
+                f"[{style}]{t.status.value}[/{style}]",
+                elapsed,
+                t.short_request,
+            )
+        console.print(table)
+        return True
+
+    elif cmd == "/result":
+        if len(parts) < 2:
+            console.print(
+                "   Usage: /result <task_id>"
+            )
+            return True
+
+        task_id = parts[1]
+        bg_mgr = agent._bg_manager
+        task = bg_mgr.get_task(task_id)
+
+        if not task:
+            console.print(
+                f"   [red]Task {task_id} not found.[/red]"
+            )
+            return True
+
+        if task.status == TaskStatus.RUNNING:
+            console.print(
+                f"   [yellow]{task_id} is still running "
+                f"({task.elapsed_seconds:.0f}s elapsed)."
+                f"[/yellow]"
+            )
+            return True
+
+        if task.status == TaskStatus.CANCELLED:
+            console.print(
+                f"   [dim]{task_id} was cancelled.[/dim]"
+            )
+            return True
+
+        if task.status == TaskStatus.FAILED:
+            console.print(
+                f"   [red]{task_id} failed: "
+                f"{task.error}[/red]"
+            )
+            return True
+
+        if task.result and hasattr(task.result, "response"):
+            console.print(
+                f"[dim][{task_id} completed in "
+                f"{task.elapsed_seconds:.0f}s][/dim]"
+            )
+            if task.result.tool_calls_made:
+                console.print(
+                    f"[dim][Tools used: "
+                    f"{', '.join(task.result.tool_calls_made)}"
+                    f"][/dim]"
+                )
+            console.print(
+                f"\n{task.result.response}\n"
+            )
+        else:
+            console.print(
+                f"   [dim]{task_id} completed but "
+                f"no response available.[/dim]"
+            )
+        return True
+
+    elif cmd == "/cancel":
+        if len(parts) < 2:
+            console.print(
+                "   Usage: /cancel <task_id>"
+            )
+            return True
+
+        task_id = parts[1]
+        bg_mgr = agent._bg_manager
+
+        if bg_mgr.cancel(task_id):
+            console.print(
+                f"   [yellow]{task_id} cancelled.[/yellow]"
+            )
+        else:
+            task = bg_mgr.get_task(task_id)
+            if not task:
+                console.print(
+                    f"   [red]Task {task_id} "
+                    f"not found.[/red]"
+                )
+            else:
+                console.print(
+                    f"   [dim]{task_id} already "
+                    f"{task.status.value}.[/dim]"
+                )
         return True
 
     elif cmd == "/scan":
@@ -785,6 +980,17 @@ def main() -> None:
         # Show generating indicator
         routing = agent._router.classify(user_input)
         timeout = agent.get_timeout_for_tier(routing.tier)
+
+        # Warn if background tasks are active (Ollama queues requests)
+        bg_active = agent._bg_manager.active_count
+        if bg_active > 0:
+            console.print(
+                f"[yellow]ℹ️  {bg_active} background task(s) "
+                f"running — Ollama queues requests, "
+                f"response may be slower[/yellow]"
+            )
+            # Extend timeout to account for queue wait
+            timeout = timeout + (bg_active * 60)
         console.print(
             f"[dim][{routing.tier.value} tier → "
             f"{agent._resolver.resolve(routing.tier, routing.security_override).model}, "
@@ -792,7 +998,9 @@ def main() -> None:
         )
 
         # Process with ReAct loop
-        state = agent.process_request(user_input)
+        state = agent.process_request(
+            user_input, timeout_override=timeout
+        )
 
         if state.cancelled:
             console.print(

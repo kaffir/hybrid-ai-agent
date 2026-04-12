@@ -104,6 +104,7 @@ class Agent:
         system_prompt: Optional[str] = None,
         config_path: str = "config/routing_rules.yml",
         default_max_iterations: int = 10,
+        silent: bool = False,
     ) -> None:
         self._ollama = ollama_client
         self._claude = claude_client
@@ -120,6 +121,7 @@ class Agent:
         )
         self._tier_timeouts = self._load_tier_timeouts(config_path)
         self._default_max_iterations = default_max_iterations
+        self._silent = silent
 
     def _load_tier_timeouts(self, config_path: str) -> dict[Tier, float]:
         """Load per-tier timeout configuration."""
@@ -147,6 +149,7 @@ class Agent:
         self,
         user_request: str,
         max_iterations: Optional[int] = None,
+        timeout_override: Optional[float] = None,
     ) -> AgentState:
         """
         Process a user request through the ReAct loop.
@@ -166,7 +169,7 @@ class Agent:
         try:
             # ── Step 1: Input sanitization ──
             sanitized = self._sanitizer.check_input(user_request)
-            if not sanitized.is_clean:
+            if not sanitized.is_clean and not self._silent:
                 console.print(
                     "[yellow]⚠️  Suspicious input detected:[/yellow]"
                 )
@@ -192,7 +195,7 @@ class Agent:
             )
 
             # ── Step 4: Run ReAct loop ──
-            timeout = self.get_timeout_for_tier(
+            timeout = timeout_override or self.get_timeout_for_tier(
                 state.routing_result.tier
             )
             state = self._react_loop(state, timeout)
@@ -203,14 +206,15 @@ class Agent:
                     state.response
                 )
                 if not output_check.is_clean:
-                    console.print(
-                        "[yellow]⚠️  Sensitive data redacted "
-                        "from response:[/yellow]"
-                    )
-                    for warning in output_check.warnings:
+                    if not self._silent:
                         console.print(
-                            f"   [yellow]• {warning}[/yellow]"
+                            "[yellow]⚠️  Sensitive data redacted "
+                            "from response:[/yellow]"
                         )
+                        for warning in output_check.warnings:
+                            console.print(
+                                f"   [yellow]• {warning}[/yellow]"
+                            )
                     state.response = output_check.sanitized
 
         except KeyboardInterrupt:
@@ -241,11 +245,12 @@ class Agent:
             state.iteration = iteration + 1
 
             # Show iteration indicator
-            console.print(
-                f"[dim]  [Step {state.iteration}/"
-                f"{state.max_iterations}][/dim]",
-                end="",
-            )
+            if not self._silent:
+                console.print(
+                    f"[dim]  [Step {state.iteration}/"
+                    f"{state.max_iterations}][/dim]",
+                    end="",
+                )
 
             # ── Call LLM ──
             llm_response = self._call_llm(
@@ -259,14 +264,15 @@ class Agent:
             parsed = parse_llm_output(llm_response)
 
             # Show reasoning
-            if parsed.reasoning:
-                console.print(
-                    f" [dim]{parsed.reasoning[:80]}...[/dim]"
-                    if len(parsed.reasoning) > 80
-                    else f" [dim]{parsed.reasoning}[/dim]"
-                )
-            else:
-                console.print()
+            if not self._silent:
+                if parsed.reasoning:
+                    console.print(
+                        f" [dim]{parsed.reasoning[:80]}...[/dim]"
+                        if len(parsed.reasoning) > 80
+                        else f" [dim]{parsed.reasoning}[/dim]"
+                    )
+                else:
+                    console.print()
 
             # ── Check for final answer ──
             if parsed.is_final:
@@ -280,10 +286,11 @@ class Agent:
             if parsed.has_tool_calls:
                 tool_call = parsed.tool_calls[0]  # One per iteration
 
-                console.print(
-                    f"[dim]  [Tool: {tool_call.tool}"
-                    f"({tool_call.params})][/dim]"
-                )
+                if not self._silent:
+                    console.print(
+                        f"[dim]  [Tool: {tool_call.tool}"
+                        f"({tool_call.params})][/dim]"
+                    )
 
                 # Execute through security pipeline
                 tool_result = self._executor.execute(tool_call)
@@ -464,10 +471,11 @@ class Agent:
             return None
         else:
             # Fallback to local
-            console.print(
-                "[yellow]⚠️  Claude API unavailable, "
-                "falling back to local model[/yellow]"
-            )
+            if not self._silent:
+                console.print(
+                    "[yellow]⚠️  Claude API unavailable, "
+                    "falling back to local model[/yellow]"
+                )
             state.model_assignment = self._resolver.resolve(
                 tier=Tier.MEDIUM, is_security_task=False
             )
