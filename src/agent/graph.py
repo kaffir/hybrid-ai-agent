@@ -191,16 +191,7 @@ class Agent:
                 state.model_assignment.requires_disclaimer
             )
 
-            # ── Step 4: Create agent branch for file safety ──
-            if self._branch_mgr:
-                branch = self._branch_mgr.start_task()
-                if branch:
-                    console.print(
-                        f"[dim]  [Branch: {branch.branch_name}]"
-                        f"[/dim]"
-                    )
-
-            # ── Step 5: Run ReAct loop ──
+            # ── Step 4: Run ReAct loop ──
             timeout = self.get_timeout_for_tier(
                 state.routing_result.tier
             )

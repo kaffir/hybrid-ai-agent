@@ -122,6 +122,17 @@ class ToolExecutor:
 
         return result
 
+    def _ensure_branch(self) -> None:
+        """Create agent branch if not already active."""
+        if self._branch_mgr and not self._branch_mgr.has_active_branch:
+            from rich.console import Console
+            branch = self._branch_mgr.start_task()
+            if branch:
+                Console().print(
+                    f"[dim]  [Branch created: "
+                    f"{branch.branch_name}][/dim]"
+                )
+
     # ── File Operations ──
 
     def _handle_read_file(self, call: ToolCall) -> ToolResult:
@@ -178,10 +189,13 @@ class ToolExecutor:
                 error="Write denied by user.",
             )
 
+        # Ensure agent branch exists before writing
+        self._ensure_branch()
+
         # Execute the write
         exec_result = self._file_ops.execute_write(path, content)
         if exec_result.success:
-            # Auto-commit to agent branch if active
+            # Auto-commit to agent branch
             if self._branch_mgr and self._branch_mgr.has_active_branch:
                 self._branch_mgr.commit_change(
                     f"Agent: write {path}",
@@ -273,10 +287,13 @@ class ToolExecutor:
                 error="Delete denied by user.",
             )
 
+        # Ensure agent branch exists before deleting
+        self._ensure_branch()
+
         # Execute the delete
         exec_result = self._file_ops.execute_delete(path)
         if exec_result.success:
-            # Auto-commit to agent branch if active
+            # Auto-commit to agent branch
             if self._branch_mgr and self._branch_mgr.has_active_branch:
                 self._branch_mgr.commit_change(
                     f"Agent: delete {path}",

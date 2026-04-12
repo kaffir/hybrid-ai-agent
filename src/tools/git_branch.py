@@ -81,6 +81,52 @@ class GitBranchManager:
         result = self._run_git("git rev-parse --git-dir")
         return result.success
 
+    def verify_git_health(self) -> tuple[bool, str]:
+        """
+        Verify git is functional in the workspace.
+
+        Checks:
+          1. Git is installed
+          2. Workspace is a git repo (or can be initialized)
+          3. Git operations work correctly
+
+        Returns:
+            (healthy, message) tuple.
+        """
+        # Check git is available
+        result = self._run_git("git --version")
+        if not result.success:
+            return False, "Git is not installed or not in PATH."
+
+        # Check if workspace is a repo
+        if not self._is_git_repo():
+            return True, "Not a git repo — will initialize on first write."
+
+        # Check git status works
+        result = self._run_git("git status")
+        if not result.success:
+            return False, (
+                f"Git status failed: {result.error or result.stderr}. "
+                f"Repository may be corrupted."
+            )
+
+        # Check for leftover agent branches from previous sessions
+        orphans = self.list_agent_branches()
+        if orphans:
+            current = self._get_current_branch_name()
+            if current and current.startswith("agent/task-"):
+                return False, (
+                    f"Currently on agent branch: {current}. "
+                    f"Run 'git checkout main' before starting."
+                )
+            return True, (
+                f"Found {len(orphans)} orphaned agent branch(es): "
+                f"{', '.join(orphans)}. "
+                f"Use /branches and /discard to clean up."
+            )
+
+        return True, "Git is healthy."
+
     def init_repo_if_needed(self) -> bool:
         """
         Initialize git repo if workspace isn't one yet.

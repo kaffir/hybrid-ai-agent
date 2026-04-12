@@ -278,6 +278,49 @@ def handle_command(
     cmd = parts[0].lower()
 
     if cmd in ("/quit", "/exit"):
+        # Cleanup: switch back to main if on agent branch
+        branch_mgr = agent._branch_mgr
+        if branch_mgr and branch_mgr.has_active_branch:
+            branch = branch_mgr.current_branch.branch_name
+            console.print(
+                f"   [yellow]Active agent branch: "
+                f"{branch}[/yellow]"
+            )
+            try:
+                answer = console.input(
+                    "   Apply changes before exit? "
+                    "[y/n/discard]: "
+                ).strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                answer = "n"
+            if answer in ("y", "yes"):
+                success, msg = branch_mgr.apply()
+                console.print(
+                    f"   [green]{msg}[/green]"
+                    if success
+                    else f"   [red]{msg}[/red]"
+                )
+            elif answer == "discard":
+                success, msg = branch_mgr.discard()
+                console.print(
+                    f"   [yellow]{msg}[/yellow]"
+                    if success
+                    else f"   [red]{msg}[/red]"
+                )
+            else:
+                # Leave branch as-is but switch to main
+                shell = ShellExec(workspace_root=os.getenv(
+                    "WORKSPACE_ROOT",
+                    str(Path.cwd() / "_workspace")
+                ))
+                shell.execute(
+                    f"git checkout "
+                    f"{branch_mgr.current_branch.base_branch}"
+                )
+                console.print(
+                    f"   [dim]Switched to main. "
+                    f"Branch {branch} preserved.[/dim]"
+                )
         console.print("[dim]Goodbye![/dim]")
         sys.exit(0)
 
@@ -544,6 +587,20 @@ def main() -> None:
                 f"first.[/bold red]"
             )
             sys.exit(1)
+
+    # Check git health in workspace
+    branch_mgr = agent._branch_mgr
+    if branch_mgr:
+        healthy, git_msg = branch_mgr.verify_git_health()
+        if not healthy:
+            console.print(
+                f"[bold yellow]⚠️  Git warning: "
+                f"{git_msg}[/bold yellow]"
+            )
+        elif "orphaned" in git_msg.lower():
+            console.print(
+                f"[yellow]ℹ️  {git_msg}[/yellow]"
+            )
 
     console.print()
 
