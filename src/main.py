@@ -33,6 +33,7 @@ from src.models.health_checker import HealthChecker
 from src.models.pending_queue import PendingTaskQueue, PendingTask
 from src.agent.graph import Agent
 from src.agent.memory import ConversationMemory
+from src.agent.scanner import WorkspaceScanner
 from src.agent.tool_executor import ToolExecutor
 from src.tools.file_ops import FileOps
 from src.tools.shell_exec import ShellExec
@@ -112,6 +113,8 @@ def create_agent() -> Agent:
 
     branch_manager = GitBranchManager(shell=shell_exec)
 
+    workspace_scanner = WorkspaceScanner(file_ops=file_ops)
+
     tool_executor = ToolExecutor(
         file_ops=file_ops,
         shell_exec=shell_exec,
@@ -168,6 +171,7 @@ def create_agent() -> Agent:
         default_max_iterations=max_iterations,
     )
 
+    agent._scanner = workspace_scanner
     return agent
 
 
@@ -463,6 +467,89 @@ def handle_command(
         console.print(
             "   [green]Conversation history cleared.[/green]"
         )
+        return True
+
+    elif cmd == "/scan":
+        # Parse scan arguments
+        scan_path = "."
+        scan_pattern = None
+        scan_file = None
+        scan_instruction = ""
+
+        i = 1
+        while i < len(parts):
+            if parts[i] == "--pattern" and i + 1 < len(parts):
+                scan_pattern = parts[i + 1]
+                i += 2
+            elif parts[i] == "--ask" and i + 1 < len(parts):
+                scan_instruction = " ".join(parts[i + 1:])
+                break
+            else:
+                target = parts[i]
+                # Check if it looks like a file or directory
+                if "." in target and "/" in target or target.endswith(".py"):
+                    scan_file = target
+                else:
+                    scan_path = target
+                i += 1
+
+        console.print("[dim]Scanning workspace...[/dim]")
+
+        scanner = agent._scanner
+        scan_result = scanner.scan(
+            path=scan_path,
+            pattern=scan_pattern,
+            specific_file=scan_file,
+        )
+
+        if scan_result.error:
+            console.print(
+                f"[red]Scan error: {scan_result.error}[/red]"
+            )
+            console.print()
+            return True
+
+        console.print(
+            f"[dim]Found {scan_result.file_count} file(s), "
+            f"{scan_result.total_bytes:,} bytes[/dim]"
+        )
+        if scan_result.truncated:
+            console.print(
+                "[yellow]⚠️  Content truncated — scan a "
+                "specific directory for full coverage[/yellow]"
+            )
+
+        # Build prompt and send to agent
+        prompt = scanner.build_analysis_prompt(
+            scan_result,
+            instruction=scan_instruction,
+        )
+
+        # Route and process through the agent
+        routing = agent._router.classify(
+            scan_instruction or "analyze code for bugs"
+        )
+        timeout = agent.get_timeout_for_tier(routing.tier)
+        model = agent._resolver.resolve(
+            routing.tier, routing.security_override
+        ).model
+
+        console.print(
+            f"[dim][{routing.tier.value} tier → {model}, "
+            f"{timeout:.0f}s timeout, Ctrl+C to cancel][/dim]"
+        )
+
+        state = agent.process_request(prompt)
+
+        if state.cancelled:
+            console.print(
+                f"\n[yellow]{state.error}[/yellow]\n"
+            )
+        elif state.error:
+            console.print(f"\n[red]{state.error}[/red]\n")
+        else:
+            console.print(f"\n{state.response}\n")
+
         return True
 
     elif cmd == "/config":
