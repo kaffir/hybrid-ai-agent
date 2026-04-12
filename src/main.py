@@ -110,7 +110,13 @@ def create_agent() -> Agent:
         "AUTO_APPROVE_WRITES", "false"
     ).lower() == "true"
     max_turns = int(os.getenv('MAX_CONVERSATION_TURNS', '20'))
-    memory = ConversationMemory(max_turns=max_turns)
+    conversation_file = os.path.join(
+        workspace, ".agent", "conversation.json"
+    )
+    memory = ConversationMemory(
+        max_turns=max_turns,
+        persist_path=conversation_file,
+    )
 
     branch_manager = GitBranchManager(shell=shell_exec)
 
@@ -347,6 +353,12 @@ def handle_command(
                     f"   [dim]Switched to main. "
                     f"Branch {branch} preserved.[/dim]"
                 )
+        # Save conversation before exit
+        if agent._memory.has_persist_path:
+            agent._memory.save()
+            console.print(
+                "   [dim]Conversation saved.[/dim]"
+            )
         console.print("[dim]Goodbye![/dim]")
         sys.exit(0)
 
@@ -468,7 +480,8 @@ def handle_command(
     elif cmd == "/clear":
         agent._memory.clear()
         console.print(
-            "   [green]Conversation history cleared.[/green]"
+            "   [green]Conversation history cleared "
+            "(saved file removed).[/green]"
         )
         return True
 
@@ -800,6 +813,29 @@ def handle_command(
         )
         return True
 
+    elif cmd == "/save":
+        if agent._memory.save():
+            console.print(
+                "   [green]Conversation saved.[/green]"
+            )
+        else:
+            console.print(
+                "   [red]Failed to save conversation.[/red]"
+            )
+        return True
+
+    elif cmd == "/load":
+        if agent._memory.load():
+            console.print(
+                f"   [green]Loaded {agent._memory.turn_count} "
+                f"turns from saved session.[/green]"
+            )
+        else:
+            console.print(
+                "   [dim]No saved conversation found.[/dim]"
+            )
+        return True
+
     elif cmd == "/diff":
         branch_mgr = agent._branch_mgr
         if not branch_mgr or not branch_mgr.has_active_branch:
@@ -943,6 +979,13 @@ def main() -> None:
             )
             sys.exit(1)
 
+    # Load previous conversation if exists
+    if agent._memory.load():
+        console.print(
+            f"[dim]Loaded {agent._memory.turn_count} turns "
+            f"from previous session.[/dim]"
+        )
+
     # Check git health in workspace
     branch_mgr = agent._branch_mgr
     if branch_mgr:
@@ -966,7 +1009,13 @@ def main() -> None:
                 "[bold]> [/bold]"
             ).strip()
         except (EOFError, KeyboardInterrupt):
-            console.print("\n[dim]Goodbye![/dim]")
+            # Save conversation before exit
+            if agent._memory.has_persist_path:
+                agent._memory.save()
+                console.print(
+                    "\n   [dim]Conversation saved.[/dim]"
+                )
+            console.print("[dim]Goodbye![/dim]")
             break
 
         if not user_input:
