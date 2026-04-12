@@ -32,6 +32,11 @@ from src.security.permissions import PermissionGate
 from src.security.audit import AuditLogger
 
 
+# Commands that ALWAYS require manual approval
+# even when auto-approve is enabled
+_NEVER_AUTO_APPROVE_COMMANDS = {"rm", "pip"}
+
+
 class ToolExecutor:
     """
     Executes validated tool calls through the security pipeline.
@@ -52,6 +57,8 @@ class ToolExecutor:
         audit_logger: AuditLogger,
         agent_mode: str = "HYBRID",
         branch_manager: GitBranchManager | None = None,
+        auto_approve_writes: bool = False,
+        auto_approve_commands: bool = False,
     ) -> None:
         self._file_ops = file_ops
         self._shell = shell_exec
@@ -60,10 +67,42 @@ class ToolExecutor:
         self._audit = audit_logger
         self._agent_mode = agent_mode
         self._branch_mgr = branch_manager
+        self._auto_approve_writes = auto_approve_writes
+        self._auto_approve_commands = auto_approve_commands
 
     def set_agent_mode(self, mode: str) -> None:
         """Update agent mode for audit logging."""
         self._agent_mode = mode
+
+    @property
+    def auto_approve_writes(self) -> bool:
+        """Whether file writes are auto-approved."""
+        return self._auto_approve_writes
+
+    @property
+    def auto_approve_commands(self) -> bool:
+        """Whether shell commands are auto-approved."""
+        return self._auto_approve_commands
+
+    def set_auto_approve(self, enabled: bool) -> None:
+        """
+        Enable/disable auto-approve for writes and commands.
+
+        Only effective when git branch isolation is active.
+        If no git repo, auto-approve is blocked for safety.
+        """
+        if enabled and self._branch_mgr:
+            if not self._branch_mgr.is_git_workspace:
+                from rich.console import Console
+                Console().print(
+                    "[yellow]⚠️  Cannot enable auto-approve: "
+                    "workspace is not a git repo. "
+                    "Initialize with 'git init' for branch "
+                    "isolation first.[/yellow]"
+                )
+                return
+        self._auto_approve_writes = enabled
+        self._auto_approve_commands = enabled
 
     def execute(self, tool_call: ToolCall) -> ToolResult:
         """
@@ -145,6 +184,24 @@ class ToolExecutor:
                 f"{branch.branch_name}][/dim]"
             )
 
+    def _can_auto_approve(self) -> bool:
+        """
+        Check if auto-approve is safe to use.
+
+        Requires:
+          1. auto_approve_writes is enabled
+          2. Git branch manager exists
+          3. Workspace is a git repo
+          4. An agent branch is active (or will be created)
+        """
+        if not self._auto_approve_writes:
+            return False
+        if not self._branch_mgr:
+            return False
+        if not self._branch_mgr.is_git_workspace:
+            return False
+        return True
+
     # ── File Operations ──
 
     def _handle_read_file(self, call: ToolCall) -> ToolResult:
@@ -180,26 +237,39 @@ class ToolExecutor:
                 error=prep_result.error or "Write preparation failed",
             )
 
-        # Request human approval
-        approval = self._permissions.approve_file_write(
-            prep_result,
-            agent_reason=f"Writing {len(content)} bytes to {path}",
-        )
-
-        self._audit.log_approval(
-            action="write_file",
-            command=f"write:{path}",
-            decision=approval.decision.value,
-            agent_mode=self._agent_mode,
-        )
-
-        if not approval.is_approved:
-            return ToolResult(
-                tool="write_file",
-                success=False,
-                output="",
-                error="Write denied by user.",
+        # Check auto-approve
+        if self._auto_approve_writes and self._can_auto_approve():
+            from rich.console import Console
+            Console().print(
+                f"[dim]  [Auto-approved: write {path}][/dim]"
             )
+            self._audit.log_approval(
+                action="write_file",
+                command=f"write:{path}",
+                decision="AUTO_APPROVED",
+                agent_mode=self._agent_mode,
+            )
+        else:
+            # Request human approval
+            approval = self._permissions.approve_file_write(
+                prep_result,
+                agent_reason=f"Writing {len(content)} bytes to {path}",
+            )
+
+            self._audit.log_approval(
+                action="write_file",
+                command=f"write:{path}",
+                decision=approval.decision.value,
+                agent_mode=self._agent_mode,
+            )
+
+            if not approval.is_approved:
+                return ToolResult(
+                    tool="write_file",
+                    success=False,
+                    output="",
+                    error="Write denied by user.",
+                )
 
         # Ensure agent branch exists before writing
         self._ensure_branch()
@@ -325,6 +395,31 @@ class ToolExecutor:
 
     # ── Shell Execution ──
 
+    def _should_auto_approve_command(
+        self, validation
+    ) -> bool:
+        """
+        Check if a command can be auto-approved.
+
+        Auto-approve requires:
+          1. auto_approve_commands is enabled
+          2. Git branch isolation is active
+          3. Command passed Gate 1 + 2 validation
+          4. Command is NOT in the never-auto-approve list
+             (rm, pip install)
+        """
+        if not self._auto_approve_commands:
+            return False
+        if not self._can_auto_approve():
+            return False
+        if not validation.is_allowed:
+            return False
+        if validation.parsed_executable in _NEVER_AUTO_APPROVE_COMMANDS:
+            return False
+        if validation.requires_enhanced_approval:
+            return False
+        return True
+
     def _handle_run_command(self, call: ToolCall) -> ToolResult:
         """Run a shell command — three-gate validation + approval."""
         command = call.params.get("command", "")
@@ -332,30 +427,45 @@ class ToolExecutor:
         # Gate 1 + 2: Validate
         validation = self._shell.validate(command)
 
-        # Gate 3: Human approval
-        approval = self._permissions.approve_shell(
-            validation,
-            agent_reason=f"Agent requested: {command}",
-        )
-
-        self._audit.log_approval(
-            action="run_command",
-            command=command,
-            decision=approval.decision.value,
-            risk_level=validation.risk_level.value,
-            agent_mode=self._agent_mode,
-        )
-
-        if not approval.is_approved:
-            return ToolResult(
-                tool="run_command",
-                success=False,
-                output="",
-                error=approval.reason or "Command denied.",
+        # Check auto-approve for commands
+        if self._should_auto_approve_command(validation):
+            from rich.console import Console
+            Console().print(
+                f"[dim]  [Auto-approved: {command}][/dim]"
+            )
+            self._audit.log_approval(
+                action="run_command",
+                command=command,
+                decision="AUTO_APPROVED",
+                risk_level=validation.risk_level.value,
+                agent_mode=self._agent_mode,
+            )
+            final_command = command
+        else:
+            # Gate 3: Human approval
+            approval = self._permissions.approve_shell(
+                validation,
+                agent_reason=f"Agent requested: {command}",
             )
 
-        # Execute the approved (possibly edited) command
-        final_command = approval.final_command
+            self._audit.log_approval(
+                action="run_command",
+                command=command,
+                decision=approval.decision.value,
+                risk_level=validation.risk_level.value,
+                agent_mode=self._agent_mode,
+            )
+
+            if not approval.is_approved:
+                return ToolResult(
+                    tool="run_command",
+                    success=False,
+                    output="",
+                    error=approval.reason or "Command denied.",
+                )
+
+            # Use the approved (possibly edited) command
+            final_command = approval.final_command
         shell_result = self._shell.execute(final_command)
 
         if shell_result.success:

@@ -104,6 +104,9 @@ def create_agent() -> Agent:
     shell_exec = ShellExec(workspace_root=workspace)
     git_ops = GitOps(shell=shell_exec)
 
+    auto_approve = os.getenv(
+        "AUTO_APPROVE_WRITES", "false"
+    ).lower() == "true"
     max_turns = int(os.getenv('MAX_CONVERSATION_TURNS', '20'))
     memory = ConversationMemory(max_turns=max_turns)
 
@@ -117,6 +120,8 @@ def create_agent() -> Agent:
         audit_logger=audit_logger,
         agent_mode=agent_mode.value,
         branch_manager=branch_manager,
+        auto_approve_writes=auto_approve,
+        auto_approve_commands=auto_approve,
     )
 
     # Health checker
@@ -191,6 +196,12 @@ def show_banner(agent: Agent, branch_mgr) -> None:
     git_mode = "Branch isolation"
     if not branch_mgr or not branch_mgr.is_git_workspace:
         git_mode = "Git-unaware (no branch isolation)"
+    auto_approve_status = (
+        " | Auto-approve: ON"
+        if agent._executor.auto_approve_writes
+        else ""
+    )
+    git_mode += auto_approve_status
     banner.append(
         f"\n   Git:      {git_mode}",
         style="dim",
@@ -451,6 +462,59 @@ def handle_command(
         agent._memory.clear()
         console.print(
             "   [green]Conversation history cleared.[/green]"
+        )
+        return True
+
+    elif cmd == "/config":
+        if len(parts) < 2:
+            write_status = (
+                "ON" if agent._executor.auto_approve_writes
+                else "OFF"
+            )
+            cmd_status = (
+                "ON" if agent._executor.auto_approve_commands
+                else "OFF"
+            )
+            console.print(
+                f"   Auto-approve writes:   "
+                f"[bold]{write_status}[/bold]"
+            )
+            console.print(
+                f"   Auto-approve commands: "
+                f"[bold]{cmd_status}[/bold]"
+            )
+            if write_status == "ON":
+                console.print(
+                    "   [dim]rm and pip install still "
+                    "require manual approval[/dim]"
+                )
+            return True
+        if len(parts) >= 3 and parts[1] == "auto-approve":
+            value = parts[2].lower()
+            if value in ("on", "true", "yes"):
+                agent._executor.set_auto_approve(True)
+                if agent._executor.auto_approve_writes:
+                    console.print(
+                        "   [green]Auto-approve writes: ON[/green]"
+                    )
+                    console.print(
+                        "   [dim]File writes auto-approved. "
+                        "Git branch is your safety net.[/dim]"
+                    )
+            elif value in ("off", "false", "no"):
+                agent._executor.set_auto_approve(False)
+                console.print(
+                    "   [yellow]Auto-approve writes: OFF[/yellow]"
+                )
+            else:
+                console.print(
+                    "   [red]Usage: /config auto-approve "
+                    "on|off[/red]"
+                )
+            return True
+        console.print(
+            "   [red]Unknown config. "
+            "Available: auto-approve[/red]"
         )
         return True
 
