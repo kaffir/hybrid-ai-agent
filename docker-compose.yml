@@ -36,6 +36,9 @@ services:
       - REQUIRE_APPROVAL_FOR_WRITES=true
       - REQUIRE_APPROVAL_FOR_SHELL=true
       - AUDIT_LOG_ENABLED=true
+      - AUTO_APPROVE_WRITES=${AUTO_APPROVE_WRITES:-false}
+      - MAX_ITERATIONS=${MAX_ITERATIONS:-10}
+      - MAX_CONVERSATION_TURNS=${MAX_CONVERSATION_TURNS:-20}
 
     # Security: Drop all capabilities, add back only what's needed
     cap_drop:

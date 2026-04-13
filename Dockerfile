@@ -41,7 +41,7 @@ RUN apt-get update && \
 # Copy virtual environment from builder
 COPY --from=builder /opt/venv /opt/venv
 
-# Copy application source and config
+# Copy application source, config, and supporting files
 COPY src/ /app/src/
 COPY config/ /app/config/
 COPY conftest.py /app/conftest.py
@@ -59,7 +59,7 @@ ENV PYTHONUNBUFFERED=1
 # Security: workspace directory for mounted projects
 RUN mkdir -p /workspace && chown agent:agent /workspace
 
-# Security: agent state directory (pending tasks, audit logs)
+# Security: agent state directory (pending tasks, audit logs, conversation)
 RUN mkdir -p /workspace/.agent && chown agent:agent /workspace/.agent
 
 # Security: Switch to non-root user
