@@ -1,4 +1,4 @@
-# Hybrid AI Coding Agent
+# Hybrid AI Coding Agent v0.3
 
 A security-first AI coding agent that intelligently routes tasks between local LLMs (Gemma 4) and cloud APIs (Claude) based on task complexity. Features a multi-step ReAct tool loop, git branch isolation for safe file manipulation, conversation memory, and full human-in-the-loop controls.
 
@@ -30,6 +30,9 @@ User Request → Router → Model Resolver → ReAct Loop
 - **Rule-based routing**: No LLM in the routing path — prevents prompt injection from manipulating task classification
 - **Git branch isolation**: Agent file modifications happen on dedicated branches, never on main directly
 - **Defense-in-depth**: Docker sandbox + command allowlist + pattern blocklist + human approval + output sanitization
+- **Auto-approve mode**: Skip repetitive approvals for file writes and safe commands, with git branch as safety net
+- **Background tasks**: Run long requests in background while continuing to work
+- **Session persistence**: Conversation history saved to disk, resume across restarts
 
 ### Components
 
@@ -117,7 +120,7 @@ cp .env.example .env
 ### 5. Verify Installation
 
 ```bash
-# Run the test suite (227 tests)
+# Run the test suite (283 tests)
 pytest tests/ -v --tb=short
 
 # Quick security validation
@@ -264,6 +267,18 @@ Proceed with local analysis? [y/n]: y
 | `/pending discard <id>` | Discard a pending task |
 | `/pending clear` | Clear all pending tasks |
 | `/health` | Show API health status and tier timeouts |
+| `/scan` | Scan workspace code files for analysis |
+| `/scan <path>` | Scan specific directory or file |
+| `/scan --pattern *.py` | Scan files matching pattern |
+| `/scan <path> --ask <question>` | Scan with custom analysis instruction |
+| `/config` | Show current configuration |
+| `/config auto-approve on\|off` | Toggle auto-approve mode |
+| `/bg <request>` | Submit request to background |
+| `/status` | List background tasks |
+| `/result <id>` | View background task result |
+| `/cancel <id>` | Cancel background task |
+| `/save` | Save conversation to disk |
+| `/load` | Load conversation from disk |
 | `/quit` | Exit (prompts to apply/discard active branch) |
 | `Ctrl+C` | Cancel the current request |
 
@@ -376,6 +391,7 @@ docker compose run --rm agent
 | `MAX_ITERATIONS` | `10` | ReAct loop iteration limit |
 | `MAX_CONVERSATION_TURNS` | `20` | Conversation memory window |
 | `AUDIT_LOG_ENABLED` | `true` | Enable/disable audit logging |
+| `AUTO_APPROVE_WRITES` | `false` | Auto-approve file writes and commands (requires git) |
 
 ### Routing Rules (config/routing_rules.yml)
 
@@ -464,7 +480,7 @@ docker run --rm alpine/curl \
 ## Testing
 
 ```bash
-# All 227 tests
+# All 283 tests
 pytest tests/ -v --tb=short
 
 # By category
@@ -496,7 +512,9 @@ hybrid-ai-agent/
 │   │   ├── graph.py           # ReAct loop orchestration
 │   │   ├── tool_interface.py  # Tool call format + parser
 │   │   ├── tool_executor.py   # Security pipeline bridge
-│   │   └── memory.py          # Conversation history
+│   │   ├── memory.py          # Conversation history (persistent)
+│   │   ├── scanner.py         # Workspace code scanner
+│   │   └── background.py      # Background task manager
 │   ├── models/
 │   │   ├── model_resolver.py  # Mode-aware model mapping
 │   │   ├── ollama_client.py   # Local LLM client
@@ -516,7 +534,7 @@ hybrid-ai-agent/
 │   ├── routing_rules.yml      # Routing keywords + timeouts
 │   ├── allowed_commands.yml   # Command whitelist
 │   └── blocked_patterns.yml   # Dangerous pattern blocklist
-├── tests/                     # 227 tests (security-focused)
+├── tests/                     # 283 tests (security-focused)
 ├── Dockerfile                 # Sandbox container
 ├── docker-compose.yml         # Sandbox orchestration
 ├── BACKLOG.md                # Future phase items

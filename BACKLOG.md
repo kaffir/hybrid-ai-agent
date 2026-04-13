@@ -4,17 +4,16 @@ Items deferred for future phases.
 
 ---
 
-## Phase 3 Items
+## Phase 4 Items
 
 | ID | Item | Priority | Description |
 |---|---|---|---|
-| BL-001 | Background Tasks (Level 2) | Medium | Add /status, /result, /cancel for long-running requests. Requires threading and task result store. |
-| BL-003 | Docker Sandbox Build Validation | Low | Full end-to-end testing of Docker sandbox including network policy enforcement and filesystem isolation. |
+| BL-003 | Docker Sandbox Build Validation | Medium | Full end-to-end testing of Docker sandbox including network policy enforcement and filesystem isolation. |
 | BL-004 | Audit Log Rotation | Low | Add daily rotation with configurable retention. Current log grows unbounded. |
 | BL-005 | Unicode Obfuscation Hardening | Low | Add Unicode normalization (NFKC) before pattern matching in sanitizer. |
 | BL-006 | Network Egress Filtering | Medium | Container-level network policy or DNS-based filtering for defense-in-depth. |
-| BL-009 | Auto-Approve for Workspace Files | Medium | Configurable flag to skip approval for file read/write within workspace. Git branch isolation as safety net. Shell/delete still require approval. Disabled by default. |
-| BL-010 | Patch-Based Workflow for Docker | Low | For production Docker deployment: read-only source mount + staging area. Agent produces patch files instead of direct writes. Safest option for multi-user environments. |
+| BL-010 | Patch-Based Workflow for Docker | Low | For production Docker deployment: read-only source mount + staging area. Agent produces patch files instead of direct writes. Safest for multi-user environments. |
+| BL-011 | Ollama Concurrent Request Handling | Medium | Current architecture queues requests at Ollama level. Investigate Ollama parallel request support or model-level request batching for better background + foreground performance. |
 
 ---
 
@@ -23,32 +22,37 @@ Items deferred for future phases.
 | ID | Item | Priority | Description |
 |---|---|---|---|
 | EN-003 | Custom Routing Rules UI | Low | Web-based editor for routing_rules.yml. |
-| EN-004 | Metrics Dashboard | Low | Track token usage, routing distribution, approval rates. |
+| EN-004 | Metrics Dashboard | Medium | Track token usage, routing distribution, approval rates, response times. Export as JSON or connect to monitoring tools. |
 | EN-005 | Multi-Agent Collaboration | Low | CrewAI-style multi-agent patterns (planner, coder, reviewer). |
 | EN-006 | CLOUD_ONLY Mode | Low | Route all tasks to Claude API. |
-| EN-007 | Persistent Conversation Memory | Medium | Save conversation history to disk. Resume sessions across restarts. |
-| EN-008 | /scan Command | Medium | Shortcut to read all files in workspace and send to LLM for analysis. Interim solution before full autonomous exploration. |
+| EN-009 | Streaming Response Output | Medium | Stream LLM responses token-by-token to terminal instead of waiting for full response. Improves perceived latency. |
+| EN-010 | Project Templates | Low | Pre-configured routing rules and tool configurations for common project types (Python, Node.js, Java). |
+| EN-011 | Team Shared Configuration | Medium | Shared config repo for routing rules, command allowlists, and blocked patterns. Enables consistent team deployment. |
 
 ---
 
-## Completed (Phase 1 + Phase 2)
+## Completed
 
-| ID | Item | Completed |
+| ID | Item | Phase |
 |---|---|---|
 | BL-007 | ReAct Tool Loop Integration | Phase 2 |
 | BL-008 | Git Branch Isolation | Phase 2 |
+| BL-009 | Auto-Approve Workspace Files | Phase 3 |
 | EN-001 | Conversation Memory | Phase 2 |
 | EN-002 | Tool Result Feedback Loop | Phase 2 |
+| EN-007 | Persistent Conversation Memory | Phase 3 |
+| EN-008 | /scan Command | Phase 3 |
+| BL-001 | Background Tasks (Level 2) | Phase 3 |
 
 ---
 
-## Phase 3 Priority Recommendation
+## Phase 4 Priority Recommendation
 
-1. **BL-009** (Auto-Approve Workspace Files) — Biggest productivity gain with git branch safety net
-2. **BL-001** (Background Tasks) — Quality of life for long-running requests
-3. **EN-007** (Persistent Memory) — Resume sessions across restarts
-4. **BL-006** (Network Egress Filtering) — Security hardening
+1. **EN-009** (Streaming Responses) — Biggest UX improvement, reduces perceived latency
+2. **BL-003** (Docker Sandbox Validation) — Required before team deployment
+3. **EN-004** (Metrics Dashboard) — Visibility into agent usage patterns
+4. **BL-006** (Network Egress Filtering) — Security hardening for production
 
 ---
 
-Last reviewed: April 12, 2026
+Last reviewed: April 13, 2026
