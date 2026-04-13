@@ -403,14 +403,16 @@ class ToolExecutor:
 
         Auto-approve requires:
           1. auto_approve_commands is enabled
-          2. Git branch isolation is active
+          2. Git branch manager exists and workspace is git repo
           3. Command passed Gate 1 + 2 validation
           4. Command is NOT in the never-auto-approve list
              (rm, pip install)
         """
         if not self._auto_approve_commands:
             return False
-        if not self._can_auto_approve():
+        if not self._branch_mgr:
+            return False
+        if not self._branch_mgr.is_git_workspace:
             return False
         if not validation.is_allowed:
             return False
