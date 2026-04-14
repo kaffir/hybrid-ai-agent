@@ -34,3 +34,4 @@ _workspace/.agent/
 /tmp/
 *.tmp
 _workspace/.agent/
+.agent/
