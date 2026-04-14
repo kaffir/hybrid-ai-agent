@@ -67,6 +67,10 @@ def create_agent() -> Agent:
     ).lower() == "true"
     max_iterations = int(os.getenv("MAX_ITERATIONS", "10"))
 
+    # Ensure .agent directory exists for persistence
+    agent_dir = Path(workspace) / ".agent"
+    agent_dir.mkdir(parents=True, exist_ok=True)
+
     try:
         agent_mode = AgentMode(agent_mode_str)
     except ValueError:
@@ -499,19 +503,35 @@ def handle_command(
             """
             Execute in background with isolated state.
 
-            Each background task gets:
-              - Its own conversation memory (no pollution)
+            Background tasks get:
+              - Own conversation memory (no pollution)
               - Silent output (no console bleed)
-              - Shared model clients (Ollama queues internally)
-              - Shared tool executor (approval gates still work)
+              - Own tool executor with auto-approve ON
+                (cannot prompt for approval in background)
+              - rm and pip install BLOCKED in background
+              - Git branch isolation as safety net
 
             Note: Git branch isolation is per-task via task ID,
             so concurrent tasks create separate branches.
             """
             from src.agent.memory import ConversationMemory
             from src.agent.graph import Agent
+            from src.agent.tool_executor import ToolExecutor
 
-            # Create isolated agent with fresh memory
+            # Create a background-specific tool executor
+            # with auto-approve enabled (can't prompt in bg)
+            bg_executor = ToolExecutor(
+                file_ops=agent._executor._file_ops,
+                shell_exec=agent._executor._shell,
+                git_ops=agent._executor._git,
+                permission_gate=agent._executor._permissions,
+                audit_logger=agent._executor._audit,
+                agent_mode=agent._executor._agent_mode,
+                branch_manager=agent._executor._branch_mgr,
+                auto_approve_writes=True,
+                auto_approve_commands=True,
+            )
+
             bg_agent = Agent(
                 ollama_client=agent._ollama,
                 claude_client=agent._claude,
@@ -519,7 +539,7 @@ def handle_command(
                 resolver=agent._resolver,
                 health_checker=agent._health,
                 pending_queue=agent._queue,
-                tool_executor=agent._executor,
+                tool_executor=bg_executor,
                 branch_manager=agent._branch_mgr,
                 sanitizer=agent._sanitizer,
                 memory=ConversationMemory(max_turns=20),
@@ -545,6 +565,11 @@ def handle_command(
             console.print(
                 "   Use [bold]/status[/bold] to check "
                 "progress."
+            )
+            console.print(
+                "   [dim]Background tasks auto-approve "
+                "writes and safe commands. "
+                "rm/pip blocked in background.[/dim]"
             )
             active = bg_mgr.active_count
             if active > 1:

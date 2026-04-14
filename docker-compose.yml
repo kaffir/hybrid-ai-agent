@@ -20,9 +20,11 @@ services:
         reservations:
           memory: 1G
 
-    # Security: Mount ONLY the project workspace
+    # Security: Mount project workspace + agent state for persistence
     volumes:
       - ${PROJECT_PATH:-./_workspace}:/workspace
+      # Agent state (conversation, audit, pending tasks) persists across runs
+      - ${PROJECT_PATH:-./_workspace}/.agent:/workspace/.agent
 
     # Security: Environment variables (secrets passed at runtime)
     environment:
